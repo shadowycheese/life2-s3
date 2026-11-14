@@ -1,0 +1,93 @@
+#pragma once
+
+#include "hal/dma_types.h"
+#include <driver/gpio.h>
+#include <stddef.h>
+#include <stdint.h>
+
+#define PIN_B1 GPIO_NUM_7
+#define PIN_R1 GPIO_NUM_1
+#define PIN_G1 GPIO_NUM_8
+#define PIN_R2 GPIO_NUM_6
+#define PIN_B2 GPIO_NUM_4
+#define PIN_G2 GPIO_NUM_5
+#define PIN_CLK GPIO_NUM_3
+#define PIN_LAT GPIO_NUM_2
+
+#define PIN_OE GPIO_NUM_12
+#define PIN_A GPIO_NUM_13
+#define PIN_B GPIO_NUM_9
+#define PIN_C GPIO_NUM_10
+#define PIN_D GPIO_NUM_11
+
+#define PANEL_WIDTH 64
+#define PANEL_HEIGHT 64
+#define PANEL_COUNT 2
+
+class Hub75Driver
+{
+public:
+    Hub75Driver();
+
+    inline int width()
+    {
+        return _width;
+    }
+
+    inline int height()
+    {
+        return _height;
+    }
+
+    bool init();
+    void start();
+
+    void set_frame_buffer(const uint16_t *fb_64x64);
+
+private:
+    static constexpr int _width = PANEL_WIDTH;
+    static constexpr int _height = PANEL_HEIGHT;
+    static constexpr int _rows = 16;
+    static constexpr int _row_words = 15 * (_width * PANEL_COUNT);
+    static constexpr int _dma_words = _rows * (_row_words + 2);
+    static constexpr int _dma_bytes = _dma_words * sizeof(uint16_t);
+
+    static constexpr int _oe_start = 0;
+    static constexpr int _oe_end = _width - 1;
+
+    enum : uint16_t
+    {
+        BitR1 = 0,
+        BitG1 = 1,
+        BitB1 = 2,
+        BitR2 = 3,
+        BitG2 = 4,
+        BitB2 = 5,
+        AddrShift = 6,
+        BitLAT = 11,
+        BitOE = 12,
+    };
+
+    inline size_t round32(size_t size)
+    {
+        size_t mod = size % 32;
+
+        if (mod == 0)
+        {
+            return size;
+        }
+
+        return size + (32 - mod);
+    }
+
+    void configure_lcd_clock();
+    void configure_lcd_mode();
+    void configure_gpio();
+    bool allocate_dma();
+    void build_descriptors();
+    void encode_frame(const uint16_t *fb_64x32);
+
+    void *_dma_chan = nullptr;
+    void *_descriptors = nullptr;
+    uint16_t *_dma_buf = nullptr;
+};
