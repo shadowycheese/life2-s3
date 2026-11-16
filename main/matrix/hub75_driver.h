@@ -23,7 +23,7 @@
 
 #define PANEL_WIDTH 64
 #define PANEL_HEIGHT 32
-#define PANEL_COUNT 1
+#define PANEL_COUNT 2
 
 class Hub75Driver
 {
@@ -47,10 +47,10 @@ public:
 
 private:
     static constexpr int _width = PANEL_WIDTH;
-    static constexpr int _height = PANEL_HEIGHT;
+    static constexpr int _height = PANEL_HEIGHT * PANEL_COUNT;
     static constexpr int _rows = 16;
     static constexpr int _row_words = 15 * (_width * PANEL_COUNT);
-    static constexpr int _dma_words = _rows * (_row_words + 2);
+    static constexpr int _dma_words = _rows * (_row_words);
     static constexpr int _dma_bytes = _dma_words * sizeof(uint16_t);
 
     static constexpr int _oe_start = 0;
@@ -68,6 +68,8 @@ private:
         BitLAT = 11,
         BitOE = 12,
     };
+
+    inline uint16_t map_pixel(const uint16_t *fb, int x, int y);
 
     inline size_t round32(size_t size)
     {

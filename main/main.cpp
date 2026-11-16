@@ -467,7 +467,7 @@ void gif_task(void *)
 {
     ESP_LOGI(APP_TAG, "Running main loop on core %d", xPortGetCoreID());
 
-    gifplayer.openData(&display, test_gif, test_gif_len);
+    gifplayer.openData(&display, sf_gif, sf_gif_len);
 
     const TickType_t delay_period = pdMS_TO_TICKS(TICK_SIZE * 5);
 
@@ -477,12 +477,12 @@ void gif_task(void *)
     {
         display.clear_screen();
 
-        int delay = 2000; // gifplayer.play();
+        int delay = gifplayer.play();
 
         for (int x = 10; x < 20; x++)
         {
-            // display.draw_pixel(x, 1, 0x400 + x);
-            display.draw_pixel(x, 15, 0x400 + x);
+            // display.draw_pixel(x + 20, 4, 0x0C0 + x);
+            // display.draw_pixel(x, 61, 0xF00 + x);
         }
         // display.drawRect(x, y, 21, 21, 0xC00);
         // display.drawRect(x + 1, y + 1, 19, 19, 0x0C0);

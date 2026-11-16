@@ -180,65 +180,62 @@ void Hub75Driver::build_descriptors()
 
 void Hub75Driver::encode_frame(const uint16_t *fb)
 {
-    const uint16_t blank = (1u << BitOE);
     const uint16_t panel_width = PANEL_WIDTH * PANEL_COUNT;
 
     int dma_pos = 0;
 
-    for (int g = 0; g < _rows; g++)
+    for (int p = 0; p < 15; p++)
     {
-        uint16_t row_addr = ((uint16_t)g) << AddrShift;
-
-        for (int x = 0; x < _row_words; x++)
+        for (int g = 0; g < _rows; g++)
         {
-            int p = x / 128;
-            int c = x % 128;
+            uint16_t visible_row_addr = ((uint16_t)((g - 1) & 0xF)) << AddrShift;
+            uint16_t shifting_row_addr = ((uint16_t)(g) << AddrShift);
 
-            uint16_t w = row_addr | blank;
-
-            if (c < (panel_width - 1))
+            for (int x = 0; x < panel_width; x++)
             {
-                w &= ~(1u << BitOE);
-            }
+                uint16_t w = 0;
 
-            if (fb)
-            {
-                int c2 = c % 64;
-
-                uint16_t r1, r2;
-
-                if (c >= 64)
+                if (x == (panel_width - 2))
                 {
-                    r1 = fb[(size_t)(63 - g) * _width + (63 - c2)];
-                    r2 = fb[(size_t)(63 - (g + _rows)) * _width + (63 - c2)];
+                    w |= shifting_row_addr | (1u << BitOE);
+                }
+                else if (x == (panel_width - 1))
+                {
+                    w |= shifting_row_addr | (1u << BitOE) | (1u << BitLAT);
                 }
                 else
                 {
-                    r1 = fb[(size_t)g * _width + c2];
-                    r2 = fb[(size_t)(g + _rows) * _width + c2];
+                    w |= visible_row_addr & ~(1u << BitOE);
                 }
 
-                r1 = (g == 0) ? 0 : r1;
-                r2 = 0;
+                if (fb)
+                {
+                    int c2 = x % 64;
 
-                w |= ((r1 >> 8) & 0xF) > p ? (1 << BitR1) : 0;
-                w |= ((r1 >> 4) & 0xF) > p ? (1 << BitB1) : 0;
-                w |= ((r1) & 0xF) > p ? (1 << BitG1) : 0;
-                w |= ((r2 >> 8) & 0xF) > p ? (1 << BitR2) : 0;
-                w |= ((r2 >> 4) & 0xF) > p ? (1 << BitB2) : 0;
-                w |= ((r2) & 0xF) > p ? (1 << BitG2) : 0;
+                    uint16_t r1, r2;
+
+                    if (x >= 64)
+                    {
+                        r1 = fb[(size_t)(63 - g) * _width + (63 - c2)];
+                        r2 = fb[(size_t)(63 - (g + _rows)) * _width + (63 - c2)];
+                    }
+                    else
+                    {
+                        r1 = fb[(size_t)g * _width + c2];
+                        r2 = fb[(size_t)(g + _rows) * _width + c2];
+                    }
+
+                    w |= ((r1 >> 8) & 0xF) > p ? (1 << BitR1) : 0;
+                    w |= ((r1 >> 4) & 0xF) > p ? (1 << BitG1) : 0;
+                    w |= ((r1) & 0xF) > p ? (1 << BitB1) : 0;
+                    w |= ((r2 >> 8) & 0xF) > p ? (1 << BitR2) : 0;
+                    w |= ((r2 >> 4) & 0xF) > p ? (1 << BitG2) : 0;
+                    w |= ((r2) & 0xF) > p ? (1 << BitB2) : 0;
+                }
+
+                _dma_buf[dma_pos++] = w;
             }
-
-            if (c == (panel_width - 1))
-            {
-                w |= (1u << BitLAT); // latch at end of shift
-            }
-
-            _dma_buf[dma_pos++] = w;
         }
-
-        //_dma_buf[dma_pos++] = 1 << BitLAT;
-        _dma_buf[dma_pos++] = row_addr;
     }
 }
 

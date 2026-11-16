@@ -46,7 +46,7 @@ public:
             _gif.reset(); // loop forever
         }
 
-        ESP_LOGI("GIF", "canvas=%d,%d framw=%d,%d, offset=%d,%d", cw, ch, w, h, iX, iY);
+        //        ESP_LOGI("GIF", "canvas=%d,%d framw=%d,%d, offset=%d,%d", cw, ch, w, h, iX, iY);
 
         pPixels = (uint16_t *)(_gif.getFrameBuf() + (cw * ch));
         pPixels += iX + (iY * cw);
@@ -62,11 +62,6 @@ public:
 
                 int xx = iX + tx;
                 int yy = iY + ty;
-
-                if (yy > 32)
-                {
-                    continue;
-                }
 
                 _display->draw_pixel(xx, yy, c2);
             }
