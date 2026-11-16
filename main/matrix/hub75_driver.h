@@ -2,8 +2,6 @@
 
 #include "hal/dma_types.h"
 #include <driver/gpio.h>
-#include <stddef.h>
-#include <stdint.h>
 #include <esp_heap_caps.h>
 #include <esp_idf_version.h>
 #include <esp_log.h>
@@ -15,6 +13,8 @@
 #include <hal/gpio_hal.h>
 #include <soc/gpio_sig_map.h>
 #include <soc/lcd_cam_struct.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #include <esp_private/gpio.h>
 
@@ -42,18 +42,12 @@
 
 class Hub75Driver
 {
-public:
+  public:
     Hub75Driver() {};
 
-    inline int width()
-    {
-        return _width;
-    }
+    inline int width() { return _width; }
 
-    inline int height()
-    {
-        return _height;
-    }
+    inline int height() { return _height; }
 
     bool init()
     {
@@ -73,7 +67,7 @@ public:
         gdma_channel_alloc_config_t alloc_cfg = {};
         gdma_channel_handle_t chan = NULL;
 
-        esp_err_t err = gdma_new_ahb_channel(&alloc_cfg, &chan);
+        esp_err_t err = gdma_new_ahb_channel(&alloc_cfg, &chan, NULL);
         if (err != ESP_OK)
         {
             ESP_LOGE(TAG, "gdma_new_channel: %s", esp_err_to_name(err));
@@ -111,10 +105,7 @@ public:
         return true;
     }
 
-    void set_frame_buffer(const uint16_t *fb_64x64)
-    {
-        encode_frame(fb_64x64);
-    }
+    void set_frame_buffer(const uint16_t *fb_64x64) { encode_frame(fb_64x64); }
 
     void start()
     {
@@ -125,7 +116,7 @@ public:
         LCD_CAM.lcd_user.lcd_start = 1;
     }
 
-private:
+  private:
     static constexpr int _width = PANEL_WIDTH;
     static constexpr int _height = PANEL_HEIGHT * PANEL_COUNT;
     static constexpr int _rows = 16;
@@ -210,18 +201,9 @@ private:
             gpio_num_t pin;
             int idx;
         } data_map[] = {
-            {PIN_R1, BitR1},
-            {PIN_G1, BitG1},
-            {PIN_B1, BitB1},
-            {PIN_R2, BitR2},
-            {PIN_G2, BitG2},
-            {PIN_B2, BitB2},
-            {PIN_A, AddrShift},
-            {PIN_B, AddrShift + 1},
-            {PIN_C, AddrShift + 2},
-            {PIN_D, AddrShift + 3},
-            {PIN_LAT, BitLAT},
-            {PIN_OE, BitOE},
+            {PIN_R1, BitR1},        {PIN_G1, BitG1},        {PIN_B1, BitB1},    {PIN_R2, BitR2},
+            {PIN_G2, BitG2},        {PIN_B2, BitB2},        {PIN_A, AddrShift}, {PIN_B, AddrShift + 1},
+            {PIN_C, AddrShift + 2}, {PIN_D, AddrShift + 3}, {PIN_LAT, BitLAT},  {PIN_OE, BitOE},
         };
 
         for (auto &m : data_map)

@@ -1,18 +1,16 @@
 {
-  "idf.currentSetup": "/home/alan/.espressif/v5.5.4/esp-idf",
-  "idf.openOcdConfigs": [
-    "board/esp32s3-builtin.cfg"
-  ],
-  "idf.customExtraVars": {
-    "IDF_TARGET": "esp32s3"
-  },
-  "clangd.path": "/home/alan/.espressif/tools/esp-clang/esp-19.1.2_20250312/esp-clang/bin/clangd",
-  "clangd.arguments": [
-    "--background-index",
-    "--query-driver=**",
-    "--compile-commands-dir=/home/alan/projects/life2-s3/build"
-  ],
-  "idf.port": "detect",
-  "idf.flashType": "DFU",
-  "C_Cpp.loggingLevel": "Debug"
+    "idf.currentSetup": "/home/alan/.espressif/v6.1.1/esp-idf",
+    "idf.openOcdConfigs": [
+        "board/esp32s3-builtin.cfg"
+    ],
+    "idf.customExtraVars": {
+        "IDF_TARGET": "esp32s3"
+    },
+    "C_Cpp.clang_format_style": "file",
+    "clangd.path": "/home/alan/.espressif/tools/esp-clangd/esp-21.1.3_20260408/esp-clangd/bin/clangd",
+    "clangd.arguments": [
+        "--background-index",
+        "--query-driver=**",
+        "--compile-commands-dir=/projects/life2-s3/build"
+    ]
 }

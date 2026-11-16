@@ -4,8 +4,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <freertos/FreeRTOS.h>
-#include "esp_bt.h"
 #include "esp_log.h"
+#include "esp_bt.h"
 #include "nvs_flash.h"
 
 // NimBLE Stack Headers
@@ -14,6 +14,7 @@
 #include "host/ble_hs.h"
 #include "services/gap/ble_svc_gap.h"
 #include "services/gatt/ble_svc_gatt.h"
+
 #include "simulation/sim_model.h"
 
 #define COMMAND_STATE 0x40
@@ -24,6 +25,8 @@
 #define COMMAND_RESET 0x45
 #define COMMAND_ADD 0x46
 #define COMMAND_HUE 0x47
+
+#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
 
 int gatt_svr_write_callback(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt_access_ctxt *ctxt, void *arg);
 
@@ -308,7 +311,7 @@ private:
         nimble_port_freertos_deinit();
     }
 
-    static constexpr char *TAG = "BLE_CTRL";
+    static constexpr const char *TAG = "BLE_CTRL";
 
     uint8_t _ble_addr_type;
 
@@ -333,16 +336,16 @@ private:
         0x58, 0x57, 0x56, 0x55, 0x54, 0x53, 0x52, 0x51);
 
     // GATT Service Tree
+
     struct ble_gatt_svc_def _gatt_svr_svcs[2];
+
     const struct ble_gatt_chr_def _bt_characteristics[2] = {
         {
             .uuid = &_gatt_chr_uuid.u,
             .access_cb = gatt_svr_write_callback,
             .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP | BLE_GATT_CHR_F_READ,
         },
-        {
-            0, // No more characteristics (Terminator block)
-        }};
+        {0}};
 
     static Bluetooth *instance;
 
