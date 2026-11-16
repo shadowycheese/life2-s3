@@ -1,11 +1,10 @@
 idf_component_register(SRCS 
                         "main.cpp"
-                        "matrix/hub75_driver.cpp"
                         "matrix/gfx/Adafruit_GFX.cpp"
                         "io/espio.c"
                         "io/encoder.cpp"
                         "io/bluetooth.cpp"
-                        "gif/AnimatedGIF.cpp"
+                        "gif/animated_gif.cpp"
                         "gif/gif.inl"
                        INCLUDE_DIRS 
                         "."

@@ -13,7 +13,7 @@
 #include <esp_timer.h>
 #include "nvs_flash.h"
 #include "nvs.h"
-#include "gif/GIFPlayer.h"
+#include "gif/gif_player.h"
 #include "gif/sample/sf.h"
 #include "gif/sample/test.h"
 
@@ -467,7 +467,8 @@ void gif_task(void *)
 {
     ESP_LOGI(APP_TAG, "Running main loop on core %d", xPortGetCoreID());
 
-    gifplayer.openData(&display, sf_gif, sf_gif_len);
+    gifplayer.init(&display);
+    gifplayer.openData(sf_gif, sf_gif_len);
 
     const TickType_t delay_period = pdMS_TO_TICKS(TICK_SIZE * 5);
 

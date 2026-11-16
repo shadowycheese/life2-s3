@@ -1,92 +1,18 @@
-//
-// GIF Animator
-// written by Larry Bank
-// bitbank@pobox.com
-// Arduino port started 7/5/2020
-// Original GIF code written 20+ years ago :)
-// The goal of this code is to decode images up to 480x320
-// using no more than 22K of RAM (if sent directly to an LCD display)
-//
-// Copyright 2020 BitBank Software, Inc. All Rights Reserved.
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//    http://www.apache.org/licenses/LICENSE-2.0
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-//===========================================================================
-#include "AnimatedGIF.h"
+#include "gif/animated_gif.h"
 
-#if defined( HAL_ESP32_HAL_H_ )
-#define memcpy_P memcpy
-#pragma GCC optimize("O2")
-#endif
-#if (__ARM_ARCH >= 7) || defined(__arm64__) || defined(__aarch64__)
-#include <arm_neon.h>
-#define HAS_NEON
-#endif 
-
-static const unsigned char cGIFBits[9] = {1,4,4,4,8,8,8,8,8}; // convert odd bpp values to ones we can handle
-typedef void (GIF_MAKE_PELS)(GIFIMAGE *pFile, unsigned int code);
+static const unsigned char cGIFBits[9] = {1, 4, 4, 4, 8, 8, 8, 8, 8}; // convert odd bpp values to ones we can handle
+typedef void(GIF_MAKE_PELS)(GIFIMAGE *pFile, unsigned int code);
 // forward references
 static int GIFInit(GIFIMAGE *pGIF);
 static int GIFParseInfo(GIFIMAGE *pPage, int bInfoOnly);
 static int GIFGetMoreData(GIFIMAGE *pPage);
 static void GIFMakePels(GIFIMAGE *pPage, unsigned int code);
 
-static void GIFMakeRGB565Pels(GIFIMAGE *pPage, unsigned int code);
 static int DecodeLZW(GIFIMAGE *pImage, int iOptions);
 static int DecodeLZWTurbo(GIFIMAGE *pImage, int iOptions);
 static int32_t readMem(GIFFILE *pFile, uint8_t *pBuf, int32_t iLen);
 static int32_t seekMem(GIFFILE *pFile, int32_t iPosition);
 int GIF_getInfo(GIFIMAGE *pPage, GIFINFO *pInfo);
-#if defined( PICO_BUILD ) || defined( __LINUX__ ) || defined( __MCUXPRESSO )
-static int32_t readFile(GIFFILE *pFile, uint8_t *pBuf, int32_t iLen);
-static int32_t seekFile(GIFFILE *pFile, int32_t iPosition);
-static void closeFile(void *handle);
-
-
-// C API
-int GIF_openRAM(GIFIMAGE *pGIF, uint8_t *pData, int iDataSize, GIF_DRAW_CALLBACK *pfnDraw)
-{
-    pGIF->iError = GIF_SUCCESS;
-    pGIF->pfnRead = readMem;
-    pGIF->pfnSeek = seekMem;
-    pGIF->pfnDraw = pfnDraw;
-    pGIF->pfnOpen = NULL;
-    pGIF->pfnClose = NULL;
-    pGIF->GIFFile.iSize = iDataSize;
-    pGIF->GIFFile.pData = pData;
-    return GIFInit(pGIF);
-} /* GIF_openRAM() */
-
-#ifdef __LINUX__
-int GIF_openFile(GIFIMAGE *pGIF, const char *szFilename, GIF_DRAW_CALLBACK *pfnDraw)
-{
-    pGIF->iError = GIF_SUCCESS;
-    pGIF->pfnRead = readFile;
-    pGIF->pfnSeek = seekFile;
-    pGIF->pfnDraw = pfnDraw;
-    pGIF->pfnOpen = NULL;
-    pGIF->pfnClose = closeFile;
-    pGIF->GIFFile.fHandle = fopen(szFilename, "r+b");
-    if (pGIF->GIFFile.fHandle == NULL)
-       return 0;
-    fseek((FILE *)pGIF->GIFFile.fHandle, 0, SEEK_END);
-    pGIF->GIFFile.iSize = (int)ftell((FILE *)pGIF->GIFFile.fHandle);
-    fseek((FILE *)pGIF->GIFFile.fHandle, 0, SEEK_SET);
-    return GIFInit(pGIF);
-} /* GIF_openFile() */
-#endif
-
-void GIF_close(GIFIMAGE *pGIF)
-{
-    if (pGIF->pfnClose)
-        (*pGIF->pfnClose)(pGIF->GIFFile.fHandle);
-} /* GIF_close() */
 
 void GIF_begin(GIFIMAGE *pGIF, unsigned char ucPaletteType)
 {
@@ -106,12 +32,12 @@ void GIF_reset(GIFIMAGE *pGIF)
 //
 int GIF_playFrame(GIFIMAGE *pGIF, int *delayMilliseconds, void *pUser)
 {
-int rc;
+    int rc;
 
     if (delayMilliseconds)
-       *delayMilliseconds = 0; // clear any old valid
-    if (pGIF->GIFFile.iPos >= pGIF->GIFFile.iSize-1) // no more data exists
-    {   
+        *delayMilliseconds = 0;                        // clear any old valid
+    if (pGIF->GIFFile.iPos >= pGIF->GIFFile.iSize - 1) // no more data exists
+    {
         (*pGIF->pfnSeek)(&pGIF->GIFFile, 0); // seek to start
     }
     if (GIFParseInfo(pGIF, 0))
@@ -119,9 +45,12 @@ int rc;
         pGIF->pUser = pUser;
         if (pGIF->iError == GIF_EMPTY_FRAME) // don't try to decode it
             return 0;
-        if (pGIF->pTurboBuffer) { // the presence of the Turbo buffer indicates Turbo mode
+        if (pGIF->pTurboBuffer)
+        { // the presence of the Turbo buffer indicates Turbo mode
             rc = DecodeLZWTurbo(pGIF, 0);
-        } else {
+        }
+        else
+        {
             rc = DecodeLZW(pGIF, 0);
         }
         if (rc != 0) // problem
@@ -134,7 +63,7 @@ int rc;
     // Return 1 for more frames or 0 if this was the last frame
     if (delayMilliseconds) // if not NULL, return the frame delay time
         *delayMilliseconds = pGIF->iFrameDelay;
-    return (pGIF->GIFFile.iPos < pGIF->GIFFile.iSize-1);
+    return (pGIF->GIFFile.iPos < pGIF->GIFFile.iSize - 1);
 } /* GIF_playFrame() */
 
 int GIF_getCanvasWidth(GIFIMAGE *pGIF)
@@ -154,7 +83,7 @@ int GIF_getLoopCount(GIFIMAGE *pGIF)
 
 int GIF_getComment(GIFIMAGE *pGIF, char *pDest)
 {
-int32_t iOldPos;
+    int32_t iOldPos;
 
     iOldPos = pGIF->GIFFile.iPos; // keep old position
     (*pGIF->pfnSeek)(&pGIF->GIFFile, pGIF->iCommentPos);
@@ -170,9 +99,9 @@ int GIF_getLastError(GIFIMAGE *pGIF)
     return pGIF->iError;
 } /* GIF_getLastError() */
 
-#endif // !__cplusplus
+// #endif // !__cplusplus
 //
-// Helper functions for memory based images
+//  Helper functions for memory based images
 //
 static int32_t readMem(GIFFILE *pFile, uint8_t *pBuf, int32_t iLen)
 {
@@ -180,88 +109,36 @@ static int32_t readMem(GIFFILE *pFile, uint8_t *pBuf, int32_t iLen)
 
     iBytesRead = iLen;
     if ((pFile->iSize - pFile->iPos) < iLen)
-       iBytesRead = pFile->iSize - pFile->iPos;
+        iBytesRead = pFile->iSize - pFile->iPos;
     if (iBytesRead <= 0)
-       return 0;
+        return 0;
     memmove(pBuf, &pFile->pData[pFile->iPos], iBytesRead);
     pFile->iPos += iBytesRead;
     return iBytesRead;
 } /* readMem() */
 
-#ifndef __LINUX__
-static int32_t readFLASH(GIFFILE *pFile, uint8_t *pBuf, int32_t iLen)
-{
-    int32_t iBytesRead;
-
-    iBytesRead = iLen;
-    if ((pFile->iSize - pFile->iPos) < iLen)
-       iBytesRead = pFile->iSize - pFile->iPos;
-    if (iBytesRead <= 0)
-       return 0;
-    memcpy_P(pBuf, &pFile->pData[pFile->iPos], iBytesRead);
-    pFile->iPos += iBytesRead;
-    return iBytesRead;
-} /* readFLASH() */
-#endif // __LINUX__
-
 static int32_t seekMem(GIFFILE *pFile, int32_t iPosition)
 {
-    if (iPosition < 0) iPosition = 0;
-    else if (iPosition >= pFile->iSize) iPosition = pFile->iSize-1;
+    if (iPosition < 0)
+        iPosition = 0;
+    else if (iPosition >= pFile->iSize)
+        iPosition = pFile->iSize - 1;
     pFile->iPos = iPosition;
     return iPosition;
 } /* seekMem() */
 
-#if defined ( __LINUX__ ) || defined( __MCUXPRESSO )
-static void closeFile(void *handle)
-{
-    fclose((FILE *)handle);
-} /* closeFile() */
-
-static int32_t seekFile(GIFFILE *pFile, int32_t iPosition)
-{
-    if (iPosition < 0) iPosition = 0;
-    else if (iPosition >= pFile->iSize) iPosition = pFile->iSize-1;
-    pFile->iPos = iPosition;
-    fseek((FILE *)pFile->fHandle, iPosition, SEEK_SET);
-    return iPosition;
-} /* seekMem() */
-
-static int32_t readFile(GIFFILE *pFile, uint8_t *pBuf, int32_t iLen)
-{
-    int32_t iBytesRead;
-
-    iBytesRead = iLen;
-    if ((pFile->iSize - pFile->iPos) < iLen)
-       iBytesRead = pFile->iSize - pFile->iPos;
-    if (iBytesRead <= 0)
-       return 0;
-    iBytesRead = (int)fread(pBuf, 1, iBytesRead, (FILE *)pFile->fHandle);
-    pFile->iPos += iBytesRead;
-    return iBytesRead;
-} /* readFile() */
-
-#endif // __LINUX__
-//
-// The following functions are written in plain C and have no
-// 3rd party dependencies, not even the C runtime library
-//
-//
-// Initialize a GIF file and callback access from a file on SD or memory
-// returns 1 for success, 0 for failure
-// Fills in the canvas size of the GIFIMAGE structure
-//
 static int GIFInit(GIFIMAGE *pGIF)
 {
-    pGIF->GIFFile.iPos = 0; // start at beginning of file
-    if (!GIFParseInfo(pGIF, 1)) // gather info for the first frame
-       return 0; // something went wrong; not a GIF file?
+    pGIF->GIFFile.iPos = 0;              // start at beginning of file
+    if (!GIFParseInfo(pGIF, 1))          // gather info for the first frame
+        return 0;                        // something went wrong; not a GIF file?
     (*pGIF->pfnSeek)(&pGIF->GIFFile, 0); // seek back to start of the file
-    if (pGIF->iCanvasWidth > MAX_WIDTH || pGIF->iCanvasHeight > 32767) { // too big or corrupt
+    if (pGIF->iCanvasWidth > MAX_WIDTH || pGIF->iCanvasHeight > 32767)
+    { // too big or corrupt
         pGIF->iError = GIF_TOO_WIDE;
         return 0;
     }
-  return 1;
+    return 1;
 } /* GIFInit() */
 
 //
@@ -278,29 +155,29 @@ static int GIFParseInfo(GIFIMAGE *pPage, int bInfoOnly)
     int32_t iOffset = 0;
     int32_t iStartPos = pPage->GIFFile.iPos; // starting file position
     int iReadSize;
-    
+
     pPage->bUseLocalPalette = 0; // assume no local palette
-    pPage->bEndOfFrame = 0; // we're just getting started
-    pPage->iFrameDelay = 0; // may not have a gfx extension block
-    pPage->iRepeatCount = -1; // assume NETSCAPE loop count is not specified
+    pPage->bEndOfFrame = 0;      // we're just getting started
+    pPage->iFrameDelay = 0;      // may not have a gfx extension block
+    pPage->iRepeatCount = -1;    // assume NETSCAPE loop count is not specified
     iReadSize = MAX_CHUNK_SIZE;
     // If you try to read past the EOF, the SD lib will return garbage data
     if (iStartPos + iReadSize > pPage->GIFFile.iSize)
-       iReadSize = (pPage->GIFFile.iSize - iStartPos - 1);
+        iReadSize = (pPage->GIFFile.iSize - iStartPos - 1);
     p = pPage->ucFileBuf;
-    iBytesRead =  (*pPage->pfnRead)(&pPage->GIFFile, pPage->ucFileBuf, iReadSize); // 255 is plenty for now
+    iBytesRead = (*pPage->pfnRead)(&pPage->GIFFile, pPage->ucFileBuf, iReadSize); // 255 is plenty for now
 
     if (iBytesRead != iReadSize) // we're at the end of the file
     {
-       pPage->iError = GIF_EARLY_EOF;
-       return 0;
+        pPage->iError = GIF_EARLY_EOF;
+        return 0;
     }
-    if (iStartPos == 0) // start of the file
-    { // canvas size
+    if (iStartPos == 0)                                               // start of the file
+    {                                                                 // canvas size
         if (memcmp(p, "GIF89", 5) != 0 && memcmp(p, "GIF87", 5) != 0) // not a GIF file
         {
-           pPage->iError = GIF_BAD_FILE;
-           return 0;
+            pPage->iError = GIF_BAD_FILE;
+            return 0;
         }
         pPage->iCanvasWidth = pPage->iWidth = INTELSHORT(&p[6]);
         pPage->iCanvasHeight = pPage->iHeight = INTELSHORT(&p[8]);
@@ -311,38 +188,46 @@ static int GIFParseInfo(GIFIMAGE *pPage, int bInfoOnly)
         pPage->ucGIFBits = 0;
         iOffset = 13;
         if (p[10] & 0x80) // global color table?
-        { // by default, convert to byte-reversed RGB565 for immediate use
+        {                 // by default, convert to byte-reversed RGB565 for immediate use
             // Read enough additional data for the color table
-            i = (*pPage->pfnRead)(&pPage->GIFFile, &pPage->ucFileBuf[iBytesRead], 3*(1<<iColorTableBits));
+            i = (*pPage->pfnRead)(&pPage->GIFFile, &pPage->ucFileBuf[iBytesRead], 3 * (1 << iColorTableBits));
             iBytesRead += i;
-            if (iColorTableBits != 1 && i < 3*(1<<iColorTableBits)) { // file too small
+            if (iColorTableBits != 1 && i < 3 * (1 << iColorTableBits))
+            { // file too small
                 pPage->iError = GIF_BAD_FILE;
                 return 0;
             }
-            if (pPage->ucPaletteType == GIF_PALETTE_RGB565_LE || pPage->ucPaletteType == GIF_PALETTE_RGB565_BE) {
-                for (i=0; i<(1<<iColorTableBits); i++) {
+            if (pPage->ucPaletteType == GIF_PALETTE_RGB565_LE || pPage->ucPaletteType == GIF_PALETTE_RGB565_BE)
+            {
+                for (i = 0; i < (1 << iColorTableBits); i++)
+                {
                     uint16_t usRGB565;
-                    usRGB565 = ((p[iOffset] >> 3) << 11); // R
-                    usRGB565 |= ((p[iOffset+1] >> 2) << 5); // G
-                    usRGB565 |= (p[iOffset+2] >> 3); // B
+                    usRGB565 = ((p[iOffset] >> 3) << 11);     // R
+                    usRGB565 |= ((p[iOffset + 1] >> 2) << 5); // G
+                    usRGB565 |= (p[iOffset + 2] >> 3);        // B
                     if (pPage->ucPaletteType == GIF_PALETTE_RGB565_LE)
                         pPage->pPalette[i] = usRGB565;
                     else
                         pPage->pPalette[i] = __builtin_bswap16(usRGB565); // SPI wants MSB first
                     iOffset += 3;
                 }
-            } else if (pPage->ucPaletteType == GIF_PALETTE_1BPP || pPage->ucPaletteType == GIF_PALETTE_1BPP_OLED) {
-                uint8_t *pPal1 = (uint8_t*)pPage->pPalette;
-                for (i=0; i<(1<<iColorTableBits); i++) {
+            }
+            else if (pPage->ucPaletteType == GIF_PALETTE_1BPP || pPage->ucPaletteType == GIF_PALETTE_1BPP_OLED)
+            {
+                uint8_t *pPal1 = (uint8_t *)pPage->pPalette;
+                for (i = 0; i < (1 << iColorTableBits); i++)
+                {
                     uint16_t usGray;
-                    usGray = p[iOffset]; // R 
-                    usGray += p[iOffset+1]*2; // G is twice as important
-                    usGray += p[iOffset+2]; // B
-                    pPal1[i] = (usGray >= 512); // bright enough = 1
+                    usGray = p[iOffset];          // R
+                    usGray += p[iOffset + 1] * 2; // G is twice as important
+                    usGray += p[iOffset + 2];     // B
+                    pPal1[i] = (usGray >= 512);   // bright enough = 1
                     iOffset += 3;
                 }
-            } else { // just copy it as-is (RGB888 & RGB8888 output)
-                memcpy(pPage->pPalette, &p[iOffset], (1<<iColorTableBits) * 3);
+            }
+            else
+            { // just copy it as-is (RGB888 & RGB8888 output)
+                memcpy(pPage->pPalette, &p[iOffset], (1 << iColorTableBits) * 3);
                 iOffset += (1 << iColorTableBits) * 3;
             }
         }
@@ -352,97 +237,99 @@ static int GIFParseInfo(GIFIMAGE *pPage, int bInfoOnly)
         if (p[iOffset] == '!') /* Extension block */
         {
             iOffset++;
-            switch(p[iOffset++]) /* Block type */
+            switch (p[iOffset++]) /* Block type */
             {
-                case 0xf9: /* Graphic extension */
-                    if (p[iOffset] == 4) // correct length
+            case 0xf9:               /* Graphic extension */
+                if (p[iOffset] == 4) // correct length
+                {
+                    pPage->ucGIFBits = p[iOffset + 1];                       // packed fields
+                    pPage->iFrameDelay = (INTELSHORT(&p[iOffset + 2])) * 10; // delay in ms
+                    if (pPage->iFrameDelay <= 1)                             // 0-1 is going to make it run at 60fps; use 100 (10fps) as a reasonable substitute
+                        pPage->iFrameDelay = 100;
+                    if (pPage->ucGIFBits & 1)                  // transparent color is used
+                        pPage->ucTransparent = p[iOffset + 4]; // transparent color index
+                    iOffset += 6;
+                }
+                //                     else   // error
+                break;
+            case 0xff: /* App extension */
+                c = 1;
+                while (c) /* Skip all data sub-blocks */
+                {
+                    c = p[iOffset++];                      /* Block length */
+                    if ((iBytesRead - iOffset) < (c + 32)) // need to read more data first
                     {
-                        pPage->ucGIFBits = p[iOffset+1]; // packed fields
-                        pPage->iFrameDelay = (INTELSHORT(&p[iOffset+2]))*10; // delay in ms
-                        if (pPage->iFrameDelay <= 1) // 0-1 is going to make it run at 60fps; use 100 (10fps) as a reasonable substitute
-                           pPage->iFrameDelay = 100;
-                        if (pPage->ucGIFBits & 1) // transparent color is used
-                            pPage->ucTransparent = p[iOffset+4]; // transparent color index
-                        iOffset += 6;
+                        if ((iBytesRead - iOffset) < 0)
+                        { // invalid/truncated app-extension block length
+                            pPage->iError = GIF_DECODE_ERROR;
+                            return 0;
+                        }
+                        memmove(pPage->ucFileBuf, &pPage->ucFileBuf[iOffset], (iBytesRead - iOffset)); // move existing data down
+                        iBytesRead -= iOffset;
+                        iStartPos += iOffset;
+                        iOffset = 0;
+                        iBytesRead += (*pPage->pfnRead)(&pPage->GIFFile, &pPage->ucFileBuf[iBytesRead], c + 32);
                     }
-                    //                     else   // error
-                    break;
-                case 0xff: /* App extension */
-                    c = 1;
-                    while (c) /* Skip all data sub-blocks */
+                    if (c == 11) // fixed block length
+                    {            // Netscape app block contains the repeat count
+                        if (memcmp(&p[iOffset], "NETSCAPE2.0", 11) == 0)
+                        {
+                            if (p[iOffset + 11] == 3 && p[iOffset + 12] == 1) // loop count
+                                pPage->iRepeatCount = INTELSHORT(&p[iOffset + 13]);
+                        }
+                    }
+                    iOffset += (int)c; /* Skip to next sub-block */
+                }
+                break;
+            case 0x01: /* Text extension */
+                c = 1;
+                j = 0;
+                while (c) /* Skip all data sub-blocks */
+                {
+                    c = p[iOffset++]; /* Block length */
+                    if (j == 0)       // use only first block
                     {
-                        c = p[iOffset++]; /* Block length */
-                        if ((iBytesRead - iOffset) < (c+32)) // need to read more data first
-                        {
-                            if ((iBytesRead - iOffset) < 0) { // invalid/truncated app-extension block length
-                                pPage->iError = GIF_DECODE_ERROR;
-                                return 0;
-                            }
-                            memmove(pPage->ucFileBuf, &pPage->ucFileBuf[iOffset], (iBytesRead-iOffset)); // move existing data down
-                            iBytesRead -= iOffset;
-                            iStartPos += iOffset;
-                            iOffset = 0;
-                            iBytesRead += (*pPage->pfnRead)(&pPage->GIFFile, &pPage->ucFileBuf[iBytesRead], c+32);
-                        }
-                        if (c == 11) // fixed block length
-                        { // Netscape app block contains the repeat count
-                            if (memcmp(&p[iOffset], "NETSCAPE2.0", 11) == 0)
-                            {
-                                if (p[iOffset+11] == 3 && p[iOffset+12] == 1) // loop count
-                                    pPage->iRepeatCount = INTELSHORT(&p[iOffset+13]);
-                            }
-                        }
-                        iOffset += (int)c; /* Skip to next sub-block */
+                        j = c;
+                        if (j > 127) // max comment length = 127
+                            j = 127;
+                        //                           memcpy(pPage->szInfo1, &p[iOffset], j);
+                        //                           pPage->szInfo1[j] = '\0';
+                        j = 1;
                     }
-                    break;
-                case 0x01: /* Text extension */
-                    c = 1;
-                    j = 0;
-                    while (c) /* Skip all data sub-blocks */
+                    iOffset += (int)c; /* Skip this sub-block */
+                }
+                break;
+            case 0xfe: /* Comment */
+                c = 1;
+                while (c) /* Skip all data sub-blocks */
+                {
+                    c = p[iOffset++];                      /* Block length */
+                    if ((iBytesRead - iOffset) < (c + 32)) // need to read more data first
                     {
-                        c = p[iOffset++]; /* Block length */
-                        if (j == 0) // use only first block
+                        if ((iBytesRead - iOffset) < 0)
                         {
-                            j = c;
-                            if (j > 127)   // max comment length = 127
-                                j = 127;
-                            //                           memcpy(pPage->szInfo1, &p[iOffset], j);
-                            //                           pPage->szInfo1[j] = '\0';
-                            j = 1;
+                            // Something went wrong; invalid block length?
+                            pPage->iError = GIF_DECODE_ERROR;
+                            return 0;
                         }
-                        iOffset += (int)c; /* Skip this sub-block */
+                        memmove(pPage->ucFileBuf, &pPage->ucFileBuf[iOffset], (iBytesRead - iOffset)); // move existing data down
+                        iBytesRead -= iOffset;
+                        iStartPos += iOffset;
+                        iOffset = 0;
+                        iBytesRead += (*pPage->pfnRead)(&pPage->GIFFile, &pPage->ucFileBuf[iBytesRead], c + 32);
                     }
-                    break;
-                case 0xfe: /* Comment */
-                    c = 1;
-                    while (c) /* Skip all data sub-blocks */
+                    if (pPage->iCommentPos == 0) // Save first block info
                     {
-                        c = p[iOffset++]; /* Block length */
-                        if ((iBytesRead - iOffset) < (c+32)) // need to read more data first
-                        {
-                            if ((iBytesRead - iOffset) < 0) {
-                                // Something went wrong; invalid block length?
-                                pPage->iError = GIF_DECODE_ERROR;
-                                return 0;
-                            }
-                            memmove(pPage->ucFileBuf, &pPage->ucFileBuf[iOffset], (iBytesRead-iOffset)); // move existing data down
-                            iBytesRead -= iOffset;
-                            iStartPos += iOffset;
-                            iOffset = 0;
-                            iBytesRead += (*pPage->pfnRead)(&pPage->GIFFile, &pPage->ucFileBuf[iBytesRead], c+32);
-                        }
-                        if (pPage->iCommentPos == 0) // Save first block info
-                        {
-                            pPage->iCommentPos = iStartPos + iOffset;
-                            pPage->sCommentLen = c;
-                        }
-                        iOffset += (int)c; /* Skip this sub-block */
+                        pPage->iCommentPos = iStartPos + iOffset;
+                        pPage->sCommentLen = c;
                     }
-                    break;
-                default:
-                    /* Bad header info */
-                    pPage->iError = GIF_DECODE_ERROR;
-                    return 0;
+                    iOffset += (int)c; /* Skip this sub-block */
+                }
+                break;
+            default:
+                /* Bad header info */
+                pPage->iError = GIF_DECODE_ERROR;
+                return 0;
             } /* switch */
         }
         else // invalid byte, stop decoding
@@ -456,8 +343,9 @@ static int GIFParseInfo(GIFIMAGE *pPage, int bInfoOnly)
         }
     } /* while */
     if (bInfoOnly)
-       return 1; // we've got the info we needed, leave
-    if (p[iOffset] == ';') { // end of file, quit and return a correct error code
+        return 1; // we've got the info we needed, leave
+    if (p[iOffset] == ';')
+    { // end of file, quit and return a correct error code
         pPage->iError = GIF_EMPTY_FRAME;
         return 1;
     }
@@ -466,16 +354,17 @@ static int GIFParseInfo(GIFIMAGE *pPage, int bInfoOnly)
         iOffset++;
     // This particular frame's size and position on the main frame (if animated)
     pPage->iX = INTELSHORT(&p[iOffset]);
-    pPage->iY = INTELSHORT(&p[iOffset+2]);
-    pPage->iWidth = INTELSHORT(&p[iOffset+4]);
-    pPage->iHeight = INTELSHORT(&p[iOffset+6]);
+    pPage->iY = INTELSHORT(&p[iOffset + 2]);
+    pPage->iWidth = INTELSHORT(&p[iOffset + 4]);
+    pPage->iHeight = INTELSHORT(&p[iOffset + 6]);
     if (pPage->iWidth > pPage->iCanvasWidth || pPage->iHeight > pPage->iCanvasHeight ||
-        pPage->iWidth + pPage->iX > pPage->iCanvasWidth || pPage->iHeight + pPage->iY > pPage->iCanvasHeight) {
+        pPage->iWidth + pPage->iX > pPage->iCanvasWidth || pPage->iHeight + pPage->iY > pPage->iCanvasHeight)
+    {
         pPage->iError = GIF_DECODE_ERROR; // must be a corrupt file to encounter this error here
         return 0;
     }
     iOffset += 8;
-    
+
     /* Image descriptor
      7 6 5 4 3 2 1 0    M=0 - use global color map, ignore pixel
      M I 0 0 0 pixel    M=1 - local color map follows, use pixel
@@ -485,38 +374,43 @@ static int GIFParseInfo(GIFIMAGE *pPage, int bInfoOnly)
      */
     pPage->ucMap = p[iOffset++];
     if (pPage->ucMap & 0x80) // local color table?
-    {// by default, convert to byte-reversed RGB565 for immediate use
-        j = (1<<((pPage->ucMap & 7)+1));
+    {                        // by default, convert to byte-reversed RGB565 for immediate use
+        j = (1 << ((pPage->ucMap & 7) + 1));
         pPage->iLocalPalSize = j;
         // Read enough additional data for the color table
-        iBytesRead += (*pPage->pfnRead)(&pPage->GIFFile, &pPage->ucFileBuf[iBytesRead], j*3);            
+        iBytesRead += (*pPage->pfnRead)(&pPage->GIFFile, &pPage->ucFileBuf[iBytesRead], j * 3);
         if (pPage->ucPaletteType == GIF_PALETTE_RGB565_LE || pPage->ucPaletteType == GIF_PALETTE_RGB565_BE)
         {
-            for (i=0; i<j; i++)
+            for (i = 0; i < j; i++)
             {
                 uint16_t usRGB565;
-                usRGB565 = ((p[iOffset] >> 3) << 11); // R
-                usRGB565 |= ((p[iOffset+1] >> 2) << 5); // G
-                usRGB565 |= (p[iOffset+2] >> 3); // B
+                usRGB565 = ((p[iOffset] >> 3) << 11);     // R
+                usRGB565 |= ((p[iOffset + 1] >> 2) << 5); // G
+                usRGB565 |= (p[iOffset + 2] >> 3);        // B
                 if (pPage->ucPaletteType == GIF_PALETTE_RGB565_LE)
                     pPage->pLocalPalette[i] = usRGB565;
                 else
                     pPage->pLocalPalette[i] = __builtin_bswap16(usRGB565); // SPI wants MSB first
                 iOffset += 3;
             }
-        } else if (pPage->ucPaletteType == GIF_PALETTE_1BPP || pPage->ucPaletteType == GIF_PALETTE_1BPP_OLED) {
-            uint8_t *pPal1 = (uint8_t*)pPage->pLocalPalette;
-            for (i=0; i<j; i++) {
+        }
+        else if (pPage->ucPaletteType == GIF_PALETTE_1BPP || pPage->ucPaletteType == GIF_PALETTE_1BPP_OLED)
+        {
+            uint8_t *pPal1 = (uint8_t *)pPage->pLocalPalette;
+            for (i = 0; i < j; i++)
+            {
                 uint16_t usGray;
-                usGray = p[iOffset]; // R
-                usGray += p[iOffset+1]*2; // G is twice as important
-                usGray += p[iOffset+2]; // B
-                pPal1[i] = (usGray >= 512); // bright enough = 1
+                usGray = p[iOffset];          // R
+                usGray += p[iOffset + 1] * 2; // G is twice as important
+                usGray += p[iOffset + 2];     // B
+                pPal1[i] = (usGray >= 512);   // bright enough = 1
                 iOffset += 3;
             }
-        } else { // just copy it as-is
+        }
+        else
+        { // just copy it as-is
             memcpy(pPage->pLocalPalette, &p[iOffset], j * 3);
-            iOffset += j*3;
+            iOffset += j * 3;
         }
         pPage->bUseLocalPalette = 1;
     }
@@ -525,38 +419,38 @@ static int GIFParseInfo(GIFIMAGE *pPage, int bInfoOnly)
     pPage->iBpp = cGIFBits[pPage->ucCodeStart];
     // we are re-using the same buffer turning GIF file data
     // into "pure" LZW
-   pPage->iLZWSize = 0; // we're starting with no LZW data yet
-   c = 1; // get chunk length
-   while (c && iOffset < iBytesRead)
-   {
-//     Serial.printf("iOffset=%d, iBytesRead=%d\n", iOffset, iBytesRead);
-     c = p[iOffset++]; // get chunk length
-//     Serial.printf("Chunk size = %d\n", c);
-     if (c <= (iBytesRead - iOffset))
-     {
-       memcpy(&pPage->ucLZW[pPage->iLZWSize], &p[iOffset], c);
-       pPage->iLZWSize += c;
-       iOffset += c;
-     }
-     else // partial chunk in our buffer
-     {
-       int iPartialLen = (iBytesRead - iOffset);
-       memcpy(&pPage->ucLZW[pPage->iLZWSize], &p[iOffset], iPartialLen);
-       pPage->iLZWSize += iPartialLen;
-       iOffset += iPartialLen;
-       (*pPage->pfnRead)(&pPage->GIFFile, &pPage->ucLZW[pPage->iLZWSize], c - iPartialLen);
-       pPage->iLZWSize += (c - iPartialLen);
-     }
-     if (c == 0)
-        pPage->bEndOfFrame = 1; // signal not to read beyond the end of the frame
-   }
-// seeking on an SD card is VERY VERY SLOW, so use the data we've already read by de-chunking it
-// in this case, there's too much data, so we have to seek backwards a bit
-   if (iOffset < iBytesRead)
-   {
-//     Serial.printf("Need to seek back %d bytes\n", iBytesRead - iOffset);
-     (*pPage->pfnSeek)(&pPage->GIFFile, iStartPos + iOffset); // position file to new spot
-   }
+    pPage->iLZWSize = 0; // we're starting with no LZW data yet
+    c = 1;               // get chunk length
+    while (c && iOffset < iBytesRead)
+    {
+        //     Serial.printf("iOffset=%d, iBytesRead=%d\n", iOffset, iBytesRead);
+        c = p[iOffset++]; // get chunk length
+                          //     Serial.printf("Chunk size = %d\n", c);
+        if (c <= (iBytesRead - iOffset))
+        {
+            memcpy(&pPage->ucLZW[pPage->iLZWSize], &p[iOffset], c);
+            pPage->iLZWSize += c;
+            iOffset += c;
+        }
+        else // partial chunk in our buffer
+        {
+            int iPartialLen = (iBytesRead - iOffset);
+            memcpy(&pPage->ucLZW[pPage->iLZWSize], &p[iOffset], iPartialLen);
+            pPage->iLZWSize += iPartialLen;
+            iOffset += iPartialLen;
+            (*pPage->pfnRead)(&pPage->GIFFile, &pPage->ucLZW[pPage->iLZWSize], c - iPartialLen);
+            pPage->iLZWSize += (c - iPartialLen);
+        }
+        if (c == 0)
+            pPage->bEndOfFrame = 1; // signal not to read beyond the end of the frame
+    }
+    // seeking on an SD card is VERY VERY SLOW, so use the data we've already read by de-chunking it
+    // in this case, there's too much data, so we have to seek backwards a bit
+    if (iOffset < iBytesRead)
+    {
+        //     Serial.printf("Need to seek back %d bytes\n", iBytesRead - iOffset);
+        (*pPage->pfnSeek)(&pPage->GIFFile, iStartPos + iOffset); // position file to new spot
+    }
     return 1; // we are now at the start of the chunk data
 } /* GIFParseInfo() */
 //
@@ -569,7 +463,7 @@ int GIF_getInfo(GIFIMAGE *pPage, GIFINFO *pInfo)
     int iReadAmount;
     int iDataAvailable = 0;
     int iDataRemaining = 0;
- //   uint32_t lFileOff = 0;
+    //   uint32_t lFileOff = 0;
     int bDone = 0;
     int bExt;
     uint8_t c, *cBuf;
@@ -578,18 +472,18 @@ int GIF_getInfo(GIFIMAGE *pPage, GIFINFO *pInfo)
     iMinDelay = 10000;
     iNumFrames = 1;
     iDataRemaining = pPage->GIFFile.iSize;
-    cBuf = (uint8_t *) pPage->ucFileBuf;
+    cBuf = (uint8_t *)pPage->ucFileBuf;
     (*pPage->pfnSeek)(&pPage->GIFFile, 0);
     iDataAvailable = (*pPage->pfnRead)(&pPage->GIFFile, cBuf, FILE_BUF_SIZE);
     iDataRemaining -= iDataAvailable;
-   // lFileOff += iDataAvailable;
+    // lFileOff += iDataAvailable;
     iOff = 10;
     c = cBuf[iOff]; // get info bits
-    iOff += 3;   /* Skip flags, background color & aspect ratio */
-    if (c & 0x80) /* Deal with global color table */
+    iOff += 3;      /* Skip flags, background color & aspect ratio */
+    if (c & 0x80)   /* Deal with global color table */
     {
-        c &= 7;  /* Get the number of colors defined */
-        iOff += (2<<c)*3; /* skip color table */
+        c &= 7;               /* Get the number of colors defined */
+        iOff += (2 << c) * 3; /* skip color table */
     }
     while (!bDone) // && iNumFrames < MAX_FRAMES)
     {
@@ -598,108 +492,113 @@ int GIF_getInfo(GIFIMAGE *pPage, GIFINFO *pInfo)
         {
             if ((iDataAvailable - iOff) < 258) // need to read more data first
             {
-                memmove(cBuf, &cBuf[iOff], (iDataAvailable-iOff)); // move existing data down
+                memmove(cBuf, &cBuf[iOff], (iDataAvailable - iOff)); // move existing data down
                 iDataAvailable -= iOff;
                 iOff = 0;
-                iReadAmount = (*pPage->pfnRead)(&pPage->GIFFile, &cBuf[iDataAvailable], FILE_BUF_SIZE-iDataAvailable);
+                iReadAmount = (*pPage->pfnRead)(&pPage->GIFFile, &cBuf[iDataAvailable], FILE_BUF_SIZE - iDataAvailable);
                 iDataAvailable += iReadAmount;
                 iDataRemaining -= iReadAmount;
-               // lFileOff += iReadAmount;
+                // lFileOff += iReadAmount;
             }
-            switch(cBuf[iOff])
+            switch (cBuf[iOff])
             {
-                case 0x3b: /* End of file */
-                    /* we were fooled into thinking there were more pages */
-                    iNumFrames--;
-                    goto gifpagesz;
-    // F9 = Graphic Control Extension (fixed length of 4 bytes)
-    // FE = Comment Extension
-    // FF = Application Extension
-    // 01 = Plain Text Extension
-                case 0x21: /* Extension block */
-                    if (cBuf[iOff+1] == 0xf9 && cBuf[iOff+2] == 4) // Graphic Control Extension
+            case 0x3b: /* End of file */
+                /* we were fooled into thinking there were more pages */
+                iNumFrames--;
+                goto gifpagesz;
+                // F9 = Graphic Control Extension (fixed length of 4 bytes)
+                // FE = Comment Extension
+                // FF = Application Extension
+                // 01 = Plain Text Extension
+            case 0x21:                                             /* Extension block */
+                if (cBuf[iOff + 1] == 0xf9 && cBuf[iOff + 2] == 4) // Graphic Control Extension
+                {
+                    // cBuf[iOff+3]; // page disposition flags
+                    iDelay = cBuf[iOff + 4];                     // delay low byte
+                    iDelay |= ((uint16_t)(cBuf[iOff + 5]) << 8); // delay high byte
+                    if (iDelay < 2)                              // too fast, provide a default
+                        iDelay = 2;
+                    iDelay *= 10; // turn JIFFIES into milliseconds
+                    iTotalDelay += iDelay;
+                    if (iDelay > iMaxDelay)
+                        iMaxDelay = iDelay;
+                    else if (iDelay < iMinDelay)
+                        iMinDelay = iDelay;
+                    // (cBuf[iOff+6]; // transparent color index
+                }
+                iOff += 2;               /* skip to length */
+                iOff += (int)cBuf[iOff]; /* Skip the data block */
+                iOff++;
+                // block terminator or optional sub blocks
+                c = cBuf[iOff++]; /* Skip any sub-blocks */
+                while (c)
+                {
+                    iOff += (int)c;
+                    c = cBuf[iOff++];
+                    if ((iDataAvailable - iOff) < (c + 258)) // need to read more data first
                     {
-                       //cBuf[iOff+3]; // page disposition flags
-                        iDelay = cBuf[iOff+4]; // delay low byte
-                        iDelay |= ((uint16_t)(cBuf[iOff+5]) << 8); // delay high byte
-                        if (iDelay < 2) // too fast, provide a default
-                            iDelay = 2;
-                        iDelay *= 10; // turn JIFFIES into milliseconds
-                        iTotalDelay += iDelay;
-                        if (iDelay > iMaxDelay) iMaxDelay = iDelay;
-                        else if (iDelay < iMinDelay) iMinDelay = iDelay;
-                       // (cBuf[iOff+6]; // transparent color index
+                        memmove(cBuf, &cBuf[iOff], (iDataAvailable - iOff)); // move existing data down
+                        iDataAvailable -= iOff;
+                        iOff = 0;
+                        iReadAmount = (*pPage->pfnRead)(&pPage->GIFFile, &cBuf[iDataAvailable], FILE_BUF_SIZE - iDataAvailable);
+                        iDataAvailable += iReadAmount;
+                        iDataRemaining -= iReadAmount;
+                        // lFileOff += iReadAmount;
                     }
-                    iOff += 2; /* skip to length */
-                    iOff += (int)cBuf[iOff]; /* Skip the data block */
-                    iOff++;
-                   // block terminator or optional sub blocks
-                    c = cBuf[iOff++]; /* Skip any sub-blocks */
-                    while (c)
-                       {
-                       iOff += (int)c;
-                       c = cBuf[iOff++];
-                       if ((iDataAvailable - iOff) < (c+258)) // need to read more data first
-                        {
-                            memmove(cBuf, &cBuf[iOff], (iDataAvailable-iOff)); // move existing data down
-                            iDataAvailable -= iOff;
-                            iOff = 0;
-                            iReadAmount = (*pPage->pfnRead)(&pPage->GIFFile, &cBuf[iDataAvailable], FILE_BUF_SIZE-iDataAvailable);
-                            iDataAvailable += iReadAmount;
-                            iDataRemaining -= iReadAmount;
-                           // lFileOff += iReadAmount;
-                        }
-                    }
-                    if (c != 0) // problem, we went past the end
-                    {
-                        iNumFrames--; // possible corrupt data; stop
-                        goto gifpagesz;
-                    }
-                    break;
-                case 0x2c: /* Start of image data */
-                    bExt = 0; /* Stop doing extension blocks */
-                    break;
-                default:
-                   /* Corrupt data, stop here */
-                    iNumFrames--;
+                }
+                if (c != 0) // problem, we went past the end
+                {
+                    iNumFrames--; // possible corrupt data; stop
                     goto gifpagesz;
+                }
+                break;
+            case 0x2c:    /* Start of image data */
+                bExt = 0; /* Stop doing extension blocks */
+                break;
+            default:
+                /* Corrupt data, stop here */
+                iNumFrames--;
+                goto gifpagesz;
             } // switch
         } // while
         if (iOff >= iDataAvailable) // problem
         {
-             iNumFrames--; // possible corrupt data; stop
-             goto gifpagesz;
+            iNumFrames--; // possible corrupt data; stop
+            goto gifpagesz;
         }
-          /* Start of image data */
-        c = cBuf[iOff+9]; /* Get the flags byte */
-        iOff += 10; /* Skip image position and size */
-        if (c & 0x80) /* Local color table */
+        /* Start of image data */
+        c = cBuf[iOff + 9]; /* Get the flags byte */
+        iOff += 10;         /* Skip image position and size */
+        if (c & 0x80)       /* Local color table */
         {
             c &= 7;
-            iOff += (2<<c)*3;
+            iOff += (2 << c) * 3;
         }
-        iOff++; /* Skip LZW code size byte */
-        if ((iDataAvailable - iOff) < (c+258)) // need to read more data first
-         {
-             if (iOff < iDataAvailable) {
-                 memmove(cBuf, &cBuf[iOff], (iDataAvailable-iOff)); // move existing data down
-                 iDataAvailable -= iOff;
-                 iOff = 0;
-             } else { // already points beyond end
-                 iOff -= iDataAvailable;
-                 iDataAvailable = 0;
-             }
-             iReadAmount = (*pPage->pfnRead)(&pPage->GIFFile, &cBuf[iDataAvailable], FILE_BUF_SIZE-iDataAvailable);
-             iDataAvailable += iReadAmount;
-             iDataRemaining -= iReadAmount;
+        iOff++;                                  /* Skip LZW code size byte */
+        if ((iDataAvailable - iOff) < (c + 258)) // need to read more data first
+        {
+            if (iOff < iDataAvailable)
+            {
+                memmove(cBuf, &cBuf[iOff], (iDataAvailable - iOff)); // move existing data down
+                iDataAvailable -= iOff;
+                iOff = 0;
+            }
+            else
+            { // already points beyond end
+                iOff -= iDataAvailable;
+                iDataAvailable = 0;
+            }
+            iReadAmount = (*pPage->pfnRead)(&pPage->GIFFile, &cBuf[iDataAvailable], FILE_BUF_SIZE - iDataAvailable);
+            iDataAvailable += iReadAmount;
+            iDataRemaining -= iReadAmount;
             // lFileOff += iReadAmount;
-         }
+        }
         c = cBuf[iOff++];
         while (c) /* While there are more data blocks */
         {
-            if (iOff > (3*FILE_BUF_SIZE/4) && iDataRemaining > 0) /* Near end of buffer, re-align */
+            if (iOff > (3 * FILE_BUF_SIZE / 4) && iDataRemaining > 0) /* Near end of buffer, re-align */
             {
-                memmove(cBuf, &cBuf[iOff], (iDataAvailable-iOff)); // move existing data down
+                memmove(cBuf, &cBuf[iOff], (iDataAvailable - iOff)); // move existing data down
                 iDataAvailable -= iOff;
                 iOff = 0;
                 iReadAmount = (FILE_BUF_SIZE - iDataAvailable);
@@ -710,12 +609,12 @@ int GIF_getInfo(GIFIMAGE *pPage, GIFINFO *pInfo)
                 iDataRemaining -= iReadAmount;
                 // lFileOff += iReadAmount;
             }
-            iOff += (int)c;  /* Skip this data block */
-//            if ((int)lFileOff + iOff > pPage->GIFFile.iSize) // past end of file, stop
-//            {
-//                iNumFrames--; // don't count this page
-//                break; // last page is corrupted, don't use it
-//            }
+            iOff += (int)c;   /* Skip this data block */
+                              //            if ((int)lFileOff + iOff > pPage->GIFFile.iSize) // past end of file, stop
+                              //            {
+                              //                iNumFrames--; // don't count this page
+                              //                break; // last page is corrupted, don't use it
+                              //            }
             c = cBuf[iOff++]; /* Get length of next */
         }
         /* End of image data, check for more pages... */
@@ -726,10 +625,10 @@ int GIF_getInfo(GIFIMAGE *pPage, GIFINFO *pInfo)
         else /* More pages to scan */
         {
             iNumFrames++;
-             // read new page data starting at this offset
+            // read new page data starting at this offset
             if (pPage->GIFFile.iSize > FILE_BUF_SIZE && iDataRemaining > 0) // since we didn't read the whole file in one shot
             {
-                memmove(cBuf, &cBuf[iOff], (iDataAvailable-iOff)); // move existing data down
+                memmove(cBuf, &cBuf[iOff], (iDataAvailable - iOff)); // move existing data down
                 iDataAvailable -= iOff;
                 iOff = 0;
                 iReadAmount = (FILE_BUF_SIZE - iDataAvailable);
@@ -738,7 +637,7 @@ int GIF_getInfo(GIFIMAGE *pPage, GIFINFO *pInfo)
                 iReadAmount = (*pPage->pfnRead)(&pPage->GIFFile, &cBuf[iDataAvailable], iReadAmount);
                 iDataAvailable += iReadAmount;
                 iDataRemaining -= iReadAmount;
-               // lFileOff += iReadAmount;
+                // lFileOff += iReadAmount;
             }
         }
     } /* while !bDone */
@@ -760,23 +659,24 @@ static int GIFGetMoreData(GIFIMAGE *pPage)
     int iDelta = (pPage->iLZWSize - pPage->iLZWOff);
     int iLZWBufSize;
     unsigned char c = 1;
-    
+
     // Turbo mode uses combined buffers to read more compressed data
     iLZWBufSize = (pPage->pTurboBuffer) ? LZW_BUF_SIZE_TURBO : LZW_BUF_SIZE;
     // move any existing data down
-    if (pPage->bEndOfFrame ||  iDelta >= (iLZWBufSize - MAX_CHUNK_SIZE) || iDelta <= 0)
+    if (pPage->bEndOfFrame || iDelta >= (iLZWBufSize - MAX_CHUNK_SIZE) || iDelta <= 0)
         return 1; // frame is finished or buffer is already full; no need to read more data
     if (pPage->iLZWOff != 0)
     {
-// NB: memcpy() fails on some systems because the src and dest ptrs overlap
-// so copy the bytes in a simple loop to avoid problems
-      for (int i=0; i<pPage->iLZWSize - pPage->iLZWOff; i++) {
-         pPage->ucLZW[i] = pPage->ucLZW[i + pPage->iLZWOff];
-      }
-      pPage->iLZWSize -= pPage->iLZWOff;
-      pPage->iLZWOff = 0;
+        // NB: memcpy() fails on some systems because the src and dest ptrs overlap
+        // so copy the bytes in a simple loop to avoid problems
+        for (int i = 0; i < pPage->iLZWSize - pPage->iLZWOff; i++)
+        {
+            pPage->ucLZW[i] = pPage->ucLZW[i + pPage->iLZWOff];
+        }
+        pPage->iLZWSize -= pPage->iLZWOff;
+        pPage->iLZWOff = 0;
     }
-    while (c && pPage->GIFFile.iPos < pPage->GIFFile.iSize && pPage->iLZWSize < (iLZWBufSize-MAX_CHUNK_SIZE))
+    while (c && pPage->GIFFile.iPos < pPage->GIFFile.iSize && pPage->iLZWSize < (iLZWBufSize - MAX_CHUNK_SIZE))
     {
         (*pPage->pfnRead)(&pPage->GIFFile, &c, 1); // current length
         (*pPage->pfnRead)(&pPage->GIFFile, &pPage->ucLZW[pPage->iLZWSize], c);
@@ -793,164 +693,214 @@ static void DrawCooked(GIFIMAGE *pPage, GIFDRAW *pDraw, void *pDest)
 {
     uint8_t c, *s, *d8, *pEnd;
     uint8_t *pActivePalette;
-    
+
     pActivePalette = (pPage->bUseLocalPalette) ? (uint8_t *)pPage->pLocalPalette : (uint8_t *)pPage->pPalette;
     // d8 points to the line in the full sized canvas where the new opaque pixels will be merged
     d8 = &pPage->pFrameBuffer[pDraw->iX + (pDraw->iY + pDraw->y) * pPage->iCanvasWidth];
-    s = pDraw->pPixels; // s points to the newly decoded pixels of this line of the current frame
+    s = pDraw->pPixels;       // s points to the newly decoded pixels of this line of the current frame
     pEnd = s + pDraw->iWidth; // faster way to loop over the source pixels - eliminates a counter variable
-    
-    if (pPage->ucPaletteType == GIF_PALETTE_1BPP || pPage->ucPaletteType == GIF_PALETTE_1BPP_OLED) { // 1-bit mono
+
+    if (pPage->ucPaletteType == GIF_PALETTE_1BPP || pPage->ucPaletteType == GIF_PALETTE_1BPP_OLED)
+    { // 1-bit mono
         uint8_t *d = NULL;
         uint8_t *pPal = pActivePalette;
         uint8_t uc, ucMask;
         int iPitch = 0;
-         if (pPage->ucPaletteType == GIF_PALETTE_1BPP) { // horizontal pixels
-             d = pPage->pFrameBuffer;
-             iPitch = (pPage->iCanvasWidth+7)/8;
-             d += (pPage->iCanvasWidth * pPage->iCanvasHeight);
-             d += pDraw->iX/8; // starting column
-             d += (pDraw->iY + pDraw->y) * iPitch;
-             // Apply the new pixels to the main image and generate 1-bpp output
-             if (pDraw->ucHasTransparency) { // if transparency used
-                 uint8_t ucTransparent = pDraw->ucTransparent;
-                 if (pDraw->ucDisposalMethod == 2) {
-                     // Make an attempt to do disposal method 2 (restore to background color)
-                     // even though we can't touch pixels outside of the current frame size.
-                     // (the previous frame may be larger or in a different position)
-                     uint8_t u8BG = pPal[pDraw->ucBackground];
-                     if (u8BG == 1) u8BG = 0xff; // set all bits to use mask
-                     uc = *d; ucMask = (0x80 >> (pDraw->iX & 7));;
-                     while (s < pEnd) {
-                         c = *s++;
-                         if (c != ucTransparent) {
-                             if (pPal[c])
-                                 uc |= ucMask;
-                             else
-                                 uc &= ~ucMask;
-                             *d8++ = c;
-                         } else {
-                             uc |= (u8BG & ucMask); // transparent pixel is restored to background color
-                             *d8++ = pDraw->ucBackground;
-                         }
-                         ucMask >>= 1;
-                         if (ucMask == 0) { // write the completed byte
-                             *d++ = uc;
-                             uc = *d;
-                             ucMask = 0x80;
-                         }
-                     }
-                     *d = uc; // write last partial byte
-                 } else { // no disposal, just write non-transparent pixels
-                     uc = *d; ucMask = (0x80 >> (pDraw->iX & 7));
-                     while (s < pEnd) {
-                         c = *s++;
-                         if (c != ucTransparent) {
-                             if (pPal[c])
-                                 uc |= ucMask;
-                             else
-                                 uc &= ~ucMask;
-                             *d8 = c;
-                         }
-                         d8++;
-                         ucMask >>= 1;
-                         if (ucMask == 0) {
-                             *d++ = uc;
-                             uc = *d;
-                             ucMask = 0x80;
-                         }
-                     }
-                     *d = uc;
-                 }
-             } else { // convert everything as opaque
-                 uc = *d; ucMask = (0x80 >> (pDraw->iX & 7)); // left pixel is MSB
-                 while (s < pEnd) {
-                     c = *d8++ = *s++; // just write the new opaque pixels over the old
-                     if (pPal[c]) // if non-zero, set white pixel
+        if (pPage->ucPaletteType == GIF_PALETTE_1BPP)
+        { // horizontal pixels
+            d = pPage->pFrameBuffer;
+            iPitch = (pPage->iCanvasWidth + 7) / 8;
+            d += (pPage->iCanvasWidth * pPage->iCanvasHeight);
+            d += pDraw->iX / 8; // starting column
+            d += (pDraw->iY + pDraw->y) * iPitch;
+            // Apply the new pixels to the main image and generate 1-bpp output
+            if (pDraw->ucHasTransparency)
+            { // if transparency used
+                uint8_t ucTransparent = pDraw->ucTransparent;
+                if (pDraw->ucDisposalMethod == 2)
+                {
+                    // Make an attempt to do disposal method 2 (restore to background color)
+                    // even though we can't touch pixels outside of the current frame size.
+                    // (the previous frame may be larger or in a different position)
+                    uint8_t u8BG = pPal[pDraw->ucBackground];
+                    if (u8BG == 1)
+                        u8BG = 0xff; // set all bits to use mask
+                    uc = *d;
+                    ucMask = (0x80 >> (pDraw->iX & 7));
+                    ;
+                    while (s < pEnd)
+                    {
+                        c = *s++;
+                        if (c != ucTransparent)
+                        {
+                            if (pPal[c])
+                                uc |= ucMask;
+                            else
+                                uc &= ~ucMask;
+                            *d8++ = c;
+                        }
+                        else
+                        {
+                            uc |= (u8BG & ucMask); // transparent pixel is restored to background color
+                            *d8++ = pDraw->ucBackground;
+                        }
+                        ucMask >>= 1;
+                        if (ucMask == 0)
+                        { // write the completed byte
+                            *d++ = uc;
+                            uc = *d;
+                            ucMask = 0x80;
+                        }
+                    }
+                    *d = uc; // write last partial byte
+                }
+                else
+                { // no disposal, just write non-transparent pixels
+                    uc = *d;
+                    ucMask = (0x80 >> (pDraw->iX & 7));
+                    while (s < pEnd)
+                    {
+                        c = *s++;
+                        if (c != ucTransparent)
+                        {
+                            if (pPal[c])
+                                uc |= ucMask;
+                            else
+                                uc &= ~ucMask;
+                            *d8 = c;
+                        }
+                        d8++;
+                        ucMask >>= 1;
+                        if (ucMask == 0)
+                        {
+                            *d++ = uc;
+                            uc = *d;
+                            ucMask = 0x80;
+                        }
+                    }
+                    *d = uc;
+                }
+            }
+            else
+            { // convert everything as opaque
+                uc = *d;
+                ucMask = (0x80 >> (pDraw->iX & 7)); // left pixel is MSB
+                while (s < pEnd)
+                {
+                    c = *d8++ = *s++; // just write the new opaque pixels over the old
+                    if (pPal[c])      // if non-zero, set white pixel
                         uc |= ucMask;
-                     else
+                    else
                         uc &= ~ucMask;
-                     ucMask >>= 1;
-                     if (ucMask == 0) { // time to write the current byte
+                    ucMask >>= 1;
+                    if (ucMask == 0)
+                    { // time to write the current byte
                         *d++ = uc;
                         uc = *d;
                         ucMask = 0x80;
-                     }
-                 }
-                 *d = uc;
-             }
-         } else { // vertical pixels
-             d = pPage->pFrameBuffer;
-             d += (pPage->iCanvasWidth * pPage->iCanvasHeight);
-             d += pDraw->iX; // starting column
-             d += ((pDraw->iY + pDraw->y)>>3) * pPage->iCanvasWidth;
-             ucMask = 1 << ((pDraw->iY + pDraw->y) & 7);
-             // Apply the new pixels to the main image and generate 1-bpp output
-             if (pDraw->ucHasTransparency) { // if transparency used
-                 uint8_t ucTransparent = pDraw->ucTransparent;
-                 if (pDraw->ucDisposalMethod == 2) {
-                     // Make an attempt to do disposal method 2 (restore to background color)
-                     // even though we can't touch pixels outside of the current frame size.
-                     // (the previous frame may be larger or in a different position)
-                     uint8_t u8BG = pPal[pDraw->ucBackground];
-                     u8BG *= ucMask; // set the right bit
-                     while (s < pEnd) {
-                         c = *s++;
-                         uc = *d & ~ucMask; // clear old pixel
-                         if (c != ucTransparent) {
-                             uc |= (pPal[c] * ucMask);
-                             *d8++ = c;
-                         } else {
-                             uc |= u8BG; // transparent pixel is restored to background color
-                             *d8++ = pDraw->ucBackground;
-                         }
-                         *d++ = uc; // write back the updated pixel
-                     }
-                 } else { // no disposal, just write non-transparent pixels
-                     while (s < pEnd) {
-                         c = *s++;
-                         uc = *d & ~ucMask;
-                         if (c != ucTransparent) {
-                             *d = uc | (pPal[c] * ucMask);
-                             *d8 = c;
-                         }
-                         d++;
-                         d8++;
-                     }
-                 }
-             } else { // convert everything as opaque
-                 while (s < pEnd) {
-                     c = *d8++ = *s++; // just write the new opaque pixels over the old
-                     uc = *d & ~ucMask;
-                     *d++ = uc | (pPal[c] * ucMask);
-                 }
-             }
-         }
-    } else if (pPage->ucPaletteType == GIF_PALETTE_RGB565_LE || pPage->ucPaletteType == GIF_PALETTE_RGB565_BE) {
+                    }
+                }
+                *d = uc;
+            }
+        }
+        else
+        { // vertical pixels
+            d = pPage->pFrameBuffer;
+            d += (pPage->iCanvasWidth * pPage->iCanvasHeight);
+            d += pDraw->iX; // starting column
+            d += ((pDraw->iY + pDraw->y) >> 3) * pPage->iCanvasWidth;
+            ucMask = 1 << ((pDraw->iY + pDraw->y) & 7);
+            // Apply the new pixels to the main image and generate 1-bpp output
+            if (pDraw->ucHasTransparency)
+            { // if transparency used
+                uint8_t ucTransparent = pDraw->ucTransparent;
+                if (pDraw->ucDisposalMethod == 2)
+                {
+                    // Make an attempt to do disposal method 2 (restore to background color)
+                    // even though we can't touch pixels outside of the current frame size.
+                    // (the previous frame may be larger or in a different position)
+                    uint8_t u8BG = pPal[pDraw->ucBackground];
+                    u8BG *= ucMask; // set the right bit
+                    while (s < pEnd)
+                    {
+                        c = *s++;
+                        uc = *d & ~ucMask; // clear old pixel
+                        if (c != ucTransparent)
+                        {
+                            uc |= (pPal[c] * ucMask);
+                            *d8++ = c;
+                        }
+                        else
+                        {
+                            uc |= u8BG; // transparent pixel is restored to background color
+                            *d8++ = pDraw->ucBackground;
+                        }
+                        *d++ = uc; // write back the updated pixel
+                    }
+                }
+                else
+                { // no disposal, just write non-transparent pixels
+                    while (s < pEnd)
+                    {
+                        c = *s++;
+                        uc = *d & ~ucMask;
+                        if (c != ucTransparent)
+                        {
+                            *d = uc | (pPal[c] * ucMask);
+                            *d8 = c;
+                        }
+                        d++;
+                        d8++;
+                    }
+                }
+            }
+            else
+            { // convert everything as opaque
+                while (s < pEnd)
+                {
+                    c = *d8++ = *s++; // just write the new opaque pixels over the old
+                    uc = *d & ~ucMask;
+                    *d++ = uc | (pPal[c] * ucMask);
+                }
+            }
+        }
+    }
+    else if (pPage->ucPaletteType == GIF_PALETTE_RGB565_LE || pPage->ucPaletteType == GIF_PALETTE_RGB565_BE)
+    {
         uint16_t *d, *pPal = (uint16_t *)pActivePalette;
         d = (uint16_t *)pDest; // dest pointer to the cooked pixels
         // Apply the new pixels to the main image
-        if (pDraw->ucHasTransparency) { // if transparency used
+        if (pDraw->ucHasTransparency)
+        { // if transparency used
             uint8_t ucTransparent = pDraw->ucTransparent;
-            if (pDraw->ucDisposalMethod == 2) {
+            if (pDraw->ucDisposalMethod == 2)
+            {
                 // Make an attempt to do disposal method 2 (restore to background color)
                 // even though we can't touch pixels outside of the current frame size.
                 // (the previous frame may be larger or in a different position)
                 uint16_t u16BG = pPal[pDraw->ucBackground];
-                while (s < pEnd) {
+                while (s < pEnd)
+                {
                     c = *s++;
-                    if (c != ucTransparent) {
+                    if (c != ucTransparent)
+                    {
                         *d++ = pPal[c];
                         *d8++ = c;
-                    } else {
+                    }
+                    else
+                    {
                         *d++ = u16BG; // transparent pixel is restored to background color
                         *d8++ = pDraw->ucBackground;
                     }
                 }
-            } else { // no disposal, just write non-transparent pixels
-                while (s < pEnd) {
+            }
+            else
+            { // no disposal, just write non-transparent pixels
+                while (s < pEnd)
+                {
                     c = *s++;
-                    if (c != ucTransparent) {
+                    if (c != ucTransparent)
+                    {
                         *d = pPal[c];
                         *d8 = c;
                     }
@@ -958,16 +908,22 @@ static void DrawCooked(GIFIMAGE *pPage, GIFDRAW *pDraw, void *pDest)
                     d8++;
                 }
             }
-        } else { // convert all pixels through the palette without transparency
+        }
+        else
+        { // convert all pixels through the palette without transparency
 #if REGISTER_WIDTH == 64
-            // parallelize the writes
+          // parallelize the writes
             // optimizing for the write buffer helps; reading 4 bytes at a time vs 1 doesn't on M1
-            while (s < pEnd - 3) { // group 4 pixels
+            while (s < pEnd - 3)
+            { // group 4 pixels
                 BIGUINT bu;
                 uint8_t s0, s1, s2, s3;
                 uint16_t d1, d2, d3;
                 *(uint32_t *)d8 = *(uint32_t *)s; // just copy new opaque pixels over the old
-                s0 = s[0]; s1 = s[1]; s2 = s[2]; s3 = s[3];
+                s0 = s[0];
+                s1 = s[1];
+                s2 = s[2];
+                s3 = s[3];
                 bu = pPal[s0]; // not much difference on Apple M1
                 d1 = pPal[s1]; // but other processors may gain
                 d2 = pPal[s2]; // from unrolling the reads
@@ -981,65 +937,86 @@ static void DrawCooked(GIFIMAGE *pPage, GIFDRAW *pDraw, void *pDest)
                 d += 4;
             }
 #endif
-            while (s < pEnd) {
+            while (s < pEnd)
+            {
                 c = *d8++ = *s++; // just write the new opaque pixels over the old
-                *d++ = pPal[c]; // and create the cooked pixels through the palette
+                *d++ = pPal[c];   // and create the cooked pixels through the palette
             }
         }
-    } else { // 24bpp or 32bpp
+    }
+    else
+    { // 24bpp or 32bpp
         uint8_t pixel, *d, *pPal;
         int x;
         d = (uint8_t *)pDest;
         pPal = pActivePalette;
-        if (pDraw->ucHasTransparency) {
+        if (pDraw->ucHasTransparency)
+        {
             uint8_t ucTransparent = pDraw->ucTransparent;
-            if (pDraw->ucDisposalMethod == 2) {
+            if (pDraw->ucDisposalMethod == 2)
+            {
                 // Make an attempt to do disposal method 2 (restore to background color)
                 // even though we can't touch pixels outside of the current frame size.
                 // (the previous frame may be larger or in a different position)
-                uint8_t * bg = &pPal[pDraw->ucBackground * 3];
-                if (pDraw->ucPaletteType == GIF_PALETTE_RGB888) {
-                while (s < pEnd) {
-                    pixel = *s++;
-                    if (pixel != ucTransparent) {
-                        *d8++ = pixel;
-                        d[0] = pPal[(pixel * 3) + 0];
-                        d[1] = pPal[(pixel * 3) + 1];
-                        d[2] = pPal[(pixel * 3) + 2];
-                        d += 3;
-                    } else {
-                        *d8++ = pDraw->ucBackground;
-                        d[0] = bg[0];
-                        d[1] = bg[1];
-                        d[2] = bg[2];
-                        d += 3;
-                    }
-                } // while
-                } else { // must be RGB8888
-                while (s < pEnd) {
-                    pixel = *s++;
-                    if (pixel != ucTransparent) {
-                        *d8++ = pixel;
-                        d[0] = pPal[(pixel * 3) + 0];
-                        d[1] = pPal[(pixel * 3) + 1];
-                        d[2] = pPal[(pixel * 3) + 2];
-                        d[3] = 0xff;
-                        d += 4;
-                    } else {
-                        *d8++ = pDraw->ucBackground;
-                        d[0] = bg[0];
-                        d[1] = bg[1];
-                        d[2] = bg[2];
-                        d[3] = 0xff;
-                        d += 4;
-                    }
-                } // while
-                }
-            } else { // no disposal, just write non-transparent pixels
-                if (pPage->ucPaletteType == GIF_PALETTE_RGB888) {
-                    for (x=0; x<pPage->iWidth; x++) {
+                uint8_t *bg = &pPal[pDraw->ucBackground * 3];
+                if (pDraw->ucPaletteType == GIF_PALETTE_RGB888)
+                {
+                    while (s < pEnd)
+                    {
                         pixel = *s++;
-                        if (pixel != ucTransparent) {
+                        if (pixel != ucTransparent)
+                        {
+                            *d8++ = pixel;
+                            d[0] = pPal[(pixel * 3) + 0];
+                            d[1] = pPal[(pixel * 3) + 1];
+                            d[2] = pPal[(pixel * 3) + 2];
+                            d += 3;
+                        }
+                        else
+                        {
+                            *d8++ = pDraw->ucBackground;
+                            d[0] = bg[0];
+                            d[1] = bg[1];
+                            d[2] = bg[2];
+                            d += 3;
+                        }
+                    } // while
+                }
+                else
+                { // must be RGB8888
+                    while (s < pEnd)
+                    {
+                        pixel = *s++;
+                        if (pixel != ucTransparent)
+                        {
+                            *d8++ = pixel;
+                            d[0] = pPal[(pixel * 3) + 0];
+                            d[1] = pPal[(pixel * 3) + 1];
+                            d[2] = pPal[(pixel * 3) + 2];
+                            d[3] = 0xff;
+                            d += 4;
+                        }
+                        else
+                        {
+                            *d8++ = pDraw->ucBackground;
+                            d[0] = bg[0];
+                            d[1] = bg[1];
+                            d[2] = bg[2];
+                            d[3] = 0xff;
+                            d += 4;
+                        }
+                    } // while
+                }
+            }
+            else
+            { // no disposal, just write non-transparent pixels
+                if (pPage->ucPaletteType == GIF_PALETTE_RGB888)
+                {
+                    for (x = 0; x < pPage->iWidth; x++)
+                    {
+                        pixel = *s++;
+                        if (pixel != ucTransparent)
+                        {
                             *d8 = pixel;
                             d[0] = pPal[(pixel * 3) + 0]; // convert to RGB888 pixels
                             d[1] = pPal[(pixel * 3) + 1];
@@ -1048,10 +1025,14 @@ static void DrawCooked(GIFIMAGE *pPage, GIFDRAW *pDraw, void *pDest)
                         d8++;
                         d += 3;
                     }
-                } else { // must be RGBA32
-                    for (x=0; x<pPage->iWidth; x++) {
+                }
+                else
+                { // must be RGBA32
+                    for (x = 0; x < pPage->iWidth; x++)
+                    {
                         pixel = *s++;
-                        if (pixel != ucTransparent) {
+                        if (pixel != ucTransparent)
+                        {
                             *d8 = pixel;
                             d[0] = pPal[(pixel * 3) + 0]; // convert to RGB8888 pixels
                             d[1] = pPal[(pixel * 3) + 1];
@@ -1063,16 +1044,23 @@ static void DrawCooked(GIFIMAGE *pPage, GIFDRAW *pDraw, void *pDest)
                     }
                 }
             }
-        } else { // no transparency
-            if (pPage->ucPaletteType == GIF_PALETTE_RGB888) {
-                for (x=0; x<pPage->iWidth; x++) {
+        }
+        else
+        { // no transparency
+            if (pPage->ucPaletteType == GIF_PALETTE_RGB888)
+            {
+                for (x = 0; x < pPage->iWidth; x++)
+                {
                     pixel = *d8++ = *s++;
                     *d++ = pPal[(pixel * 3) + 0]; // convert to RGB888 pixels
                     *d++ = pPal[(pixel * 3) + 1];
                     *d++ = pPal[(pixel * 3) + 2];
                 }
-            } else { // must be RGBA32
-                for (x=0; x<pPage->iWidth; x++) {
+            }
+            else
+            { // must be RGBA32
+                for (x = 0; x < pPage->iWidth; x++)
+                {
                     pixel = *d8++ = *s++;
                     *d++ = pPal[(pixel * 3) + 0]; // convert to RGB8888 pixels
                     *d++ = pPal[(pixel * 3) + 1];
@@ -1083,11 +1071,12 @@ static void DrawCooked(GIFIMAGE *pPage, GIFDRAW *pDraw, void *pDest)
         } // opaque
     }
 } /* DrawCooked() */
-#if (defined (ARDUINO_ESP32S31_DEV) || defined (ARDUINO_ESP32S3_DEV) || defined(ARDUINO_ESP32P4_DEV)) && !defined(NO_SIMD)
+#if (defined(ARDUINO_ESP32S31_DEV) || defined(ARDUINO_ESP32S3_DEV) || defined(ARDUINO_ESP32P4_DEV)) && !defined(NO_SIMD)
 #ifdef __cplusplus
-extern "C" {
+extern "C"
+{
 #endif // __cplusplus
-void s3_merge_transparent(uint8_t *pSrc, uint8_t *pDst, uint8_t *ucTrans, int iLen, uint32_t *pPalette, uint16_t *pRGB565);
+    void s3_merge_transparent(uint8_t *pSrc, uint8_t *pDst, uint8_t *ucTrans, int iLen, uint32_t *pPalette, uint16_t *pRGB565);
 #ifdef __cplusplus
 }
 #endif // __cplusplus
@@ -1102,29 +1091,32 @@ void s3_merge_transparent(uint8_t *pSrc, uint8_t *pDst, uint8_t *ucTrans, int iL
 //
 void GIF_mergeTransparent(uint8_t *pSrc, uint8_t *pDst, uint8_t ucTrans, int iLen)
 {
-#if defined (HAS_NEON) && !defined(NO_SIMD)
+#if defined(HAS_NEON) && !defined(NO_SIMD)
     uint8x16_t u8x16_src, u8x16_dst, u8x16_mask;
     const uint8x16_t u8x16_trans = vdupq_n_u8(ucTrans);
-    while (iLen >= 16) {
+    while (iLen >= 16)
+    {
         u8x16_src = vld1q_u8(pSrc);
         u8x16_dst = vld1q_u8(pDst);
         pSrc += 16;
         u8x16_mask = vceqq_u8(u8x16_src, u8x16_trans);
-        u8x16_mask = vmvnq_u8(u8x16_mask); // there is no compare-not-equal
+        u8x16_mask = vmvnq_u8(u8x16_mask);           // there is no compare-not-equal
         u8x16_dst = vandq_u8(u8x16_dst, u8x16_mask); // preserve original pixels
         u8x16_src = vbicq_u8(u8x16_src, u8x16_mask); // preserve opaque src pixels
-        u8x16_dst = vorrq_u8(u8x16_src, u8x16_dst); // combine everything
-        vst1q_u8(pDst, u8x16_dst); // store final pixels
+        u8x16_dst = vorrq_u8(u8x16_src, u8x16_dst);  // combine everything
+        vst1q_u8(pDst, u8x16_dst);                   // store final pixels
         pDst += 16;
         iLen -= 16;
     }
     // Fall through to the generic C code for the 'tail' bytes
 #endif // Arm NEON
 
-// Generic C version
-    for (int i=0; i<iLen; i++) {
+    // Generic C version
+    for (int i = 0; i < iLen; i++)
+    {
         uint8_t c = *pSrc++;
-        if (c != ucTrans) {
+        if (c != ucTrans)
+        {
             *pDst = c;
         }
         pDst++;
@@ -1135,11 +1127,14 @@ void GIF_mergeTransparent(uint8_t *pSrc, uint8_t *pDst, uint8_t ucTrans, int iLe
 //
 void GIF_cookPixels(uint8_t *pSrc, uint8_t *pDst, int iTrans, int iLen, uint32_t *pPalette, uint16_t *pRGB565)
 {
-#if (defined (ARDUINO_ESP32S31_DEV) || defined (ARDUINO_ESP32S3_DEV) || defined(ARDUINO_ESP32P4_DEV)) && !defined(NO_SIMD)
+#if (defined(ARDUINO_ESP32S31_DEV) || defined(ARDUINO_ESP32S3_DEV) || defined(ARDUINO_ESP32P4_DEV)) && !defined(NO_SIMD)
     uint8_t ucTrans, *pTrans;
-    if (iTrans == -1) {
+    if (iTrans == -1)
+    {
         pTrans = NULL;
-    } else {
+    }
+    else
+    {
         ucTrans = (uint8_t)iTrans;
         pTrans = &ucTrans;
     }
@@ -1147,21 +1142,29 @@ void GIF_cookPixels(uint8_t *pSrc, uint8_t *pDst, int iTrans, int iLen, uint32_t
     return;
 #endif // ESP32S3/P4
 
-// Generic C version
-uint16_t *pPal = (uint16_t *)pPalette; // assume 16-bit palette for non-SIMD
-    if (iTrans == -1) { // no transparent color
-        for (int i=0; i<iLen; i++) {
+    // Generic C version
+    uint16_t *pPal = (uint16_t *)pPalette; // assume 16-bit palette for non-SIMD
+    if (iTrans == -1)
+    { // no transparent color
+        for (int i = 0; i < iLen; i++)
+        {
             uint8_t c = *pSrc++;
             *pDst++ = c;
             *pRGB565++ = pPal[c];
         }
-    } else {
+    }
+    else
+    {
         uint8_t ucTrans = (uint8_t)iTrans;
-        for (int i=0; i<iLen; i++) {
+        for (int i = 0; i < iLen; i++)
+        {
             uint8_t c = *pSrc++;
-            if (c != ucTrans) {
+            if (c != ucTrans)
+            {
                 *pDst++ = c;
-            } else {
+            }
+            else
+            {
                 c = *pDst++;
             }
             *pRGB565++ = pPal[c];
@@ -1179,16 +1182,20 @@ static void DrawNewPixels(GIFIMAGE *pPage, GIFDRAW *pDraw)
     int iPitch = pPage->iCanvasWidth;
 
     s = pDraw->pPixels;
-    d = &pPage->pFrameBuffer[pDraw->iX + (pDraw->y + pDraw->iY)  * iPitch]; // dest pointer in our complete canvas buffer
-    
+    d = &pPage->pFrameBuffer[pDraw->iX + (pDraw->y + pDraw->iY) * iPitch]; // dest pointer in our complete canvas buffer
+
     // Apply the new pixels to the main image
-    if (pDraw->ucHasTransparency) { // if transparency used
+    if (pDraw->ucHasTransparency)
+    { // if transparency used
         uint8_t ucTransparent = pDraw->ucTransparent;
-        if (pDraw->ucDisposalMethod == 2) {
+        if (pDraw->ucDisposalMethod == 2)
+        {
             memset(d, pDraw->ucBackground, pDraw->iWidth); // start with background color
         }
         GIF_mergeTransparent(s, d, ucTransparent, pDraw->iWidth);
-    } else { // disposal method doesn't matter when there aren't any transparent pixels
+    }
+    else
+    {                                // disposal method doesn't matter when there aren't any transparent pixels
         memcpy(d, s, pDraw->iWidth); // just overwrite the old pixels
     }
 } /* DrawNewPixels() */
@@ -1199,9 +1206,9 @@ static void DrawNewPixels(GIFIMAGE *pPage, GIFDRAW *pDraw)
 //
 static int LZWCopyBytes(unsigned char *buf, int iOffset, uint32_t *pSymbols, uint16_t *pLengths)
 {
-int iLen;
-uint8_t c, *s, *d, *pEnd;
-uint32_t u32Offset;
+    int iLen;
+    uint8_t c, *s, *d, *pEnd;
+    uint32_t u32Offset;
 
     iLen = *pLengths;
     u32Offset = *pSymbols;
@@ -1214,14 +1221,14 @@ uint32_t u32Offset;
     while (d < pEnd) // most frequent are 1-8 bytes in length, copy 4 or 8 bytes in these cases too
     {
 #ifdef ALLOWS_UNALIGNED
-// This is a significant perf improvement compared to copying 1 byte at a time
-// even though it will often copy too many bytes
-        BIGUINT tmp = *(BIGUINT *) s;
+        // This is a significant perf improvement compared to copying 1 byte at a time
+        // even though it will often copy too many bytes
+        BIGUINT tmp = *(BIGUINT *)s;
         s += sizeof(BIGUINT);
         *(BIGUINT *)d = tmp;
         d += sizeof(BIGUINT);
 #else
-// CPUs which enforce unaligned address exceptions must do it 1 byte at a time
+        // CPUs which enforce unaligned address exceptions must do it 1 byte at a time
         *d++ = *s++;
 #endif
     }
@@ -1232,7 +1239,7 @@ uint32_t u32Offset;
         iLen++;
         // since the code with extension byte has now been written to the output, fix the code
         *pSymbols = iOffset;
-//        pSymbols[SYM_EXTRAS] = 0xffffffff;
+        //        pSymbols[SYM_EXTRAS] = 0xffffffff;
         *d = c;
         *pLengths = (uint16_t)iLen;
     }
@@ -1241,10 +1248,15 @@ uint32_t u32Offset;
 //
 // Macro to extract a variable length code
 //
-#define GET_CODE_TURBO if (bitnum > (REGISTER_WIDTH - MAX_CODE_SIZE/*codesize*/)) { p += (bitnum >> 3); \
-            bitnum &= 7; ulBits = INTELLONG(p); } \
-        code = ((ulBits >> bitnum) & sMask);  \
-        bitnum += codesize;
+#define GET_CODE_TURBO                                          \
+    if (bitnum > (REGISTER_WIDTH - MAX_CODE_SIZE /*codesize*/)) \
+    {                                                           \
+        p += (bitnum >> 3);                                     \
+        bitnum &= 7;                                            \
+        ulBits = INTELLONG(p);                                  \
+    }                                                           \
+    code = ((ulBits >> bitnum) & sMask);                        \
+    bitnum += codesize;
 
 //
 // DecodeLZWTurbo
@@ -1276,97 +1288,111 @@ uint32_t u32Offset;
 //
 static int DecodeLZWTurbo(GIFIMAGE *pImage, int iOptions)
 {
-int i, bitnum;
-int iUncompressedLen;
-uint32_t code, oldcode, codesize, nextcode, nextlim;
-uint32_t cc, eoi;
-uint32_t sMask;
-uint8_t c, *p, *buf, codestart, *pHighWater;
-BIGUINT ulBits;
-int iLen, iColors;
-int iErr = GIF_SUCCESS;
-int iOffset;
-uint32_t *pSymbols;
-uint16_t *pLengths;
+    int i, bitnum;
+    int iUncompressedLen;
+    uint32_t code, oldcode, codesize, nextcode, nextlim;
+    uint32_t cc, eoi;
+    uint32_t sMask;
+    uint8_t c, *p, *buf, codestart, *pHighWater;
+    BIGUINT ulBits;
+    int iLen, iColors;
+    int iErr = GIF_SUCCESS;
+    int iOffset;
+    uint32_t *pSymbols;
+    uint16_t *pLengths;
 
     (void)iOptions;
     pImage->iYCount = pImage->iHeight; // count down the lines
     pImage->iXCount = pImage->iWidth;
     bitnum = 0;
     pHighWater = pImage->ucLZW + LZW_HIGHWATER_TURBO;
-    pImage->iLZWOff = 0; // Offset into compressed data
+    pImage->iLZWOff = 0;    // Offset into compressed data
     GIFGetMoreData(pImage); // Read some data to start
     codestart = pImage->ucCodeStart;
     iColors = 1 << codestart;
-    sMask = 0xffffffff << (codestart+1);
+    sMask = 0xffffffff << (codestart + 1);
     sMask = 0xffffffff - sMask;
     cc = (sMask >> 1) + 1; /* Clear code */
     eoi = cc + 1;
     iUncompressedLen = (pImage->iWidth * pImage->iHeight);
     buf = (uint8_t *)pImage->pTurboBuffer;
-    pSymbols = (uint32_t *)&buf[iUncompressedLen+256]; // we need 32-bits (really 23) for the offsets
-    pLengths = (uint16_t *)&pSymbols[4096]; // but only 16-bits for the length of any single string
-    iOffset = 0; // output data offset
-    p = pImage->ucLZW; // un-chunked LZW data
-    ulBits = INTELLONG(p); // start by reading some LZW data
-    // set up the default symbols (0..iColors-1)
-   for (i = 0; i<iColors; i++) {
-       pSymbols[i] = iUncompressedLen + i; // root symbols
-       pLengths[i] = 1;
-       buf[iUncompressedLen + i] = (unsigned char) i;
-   }
+    pSymbols = (uint32_t *)&buf[iUncompressedLen + 256]; // we need 32-bits (really 23) for the offsets
+    pLengths = (uint16_t *)&pSymbols[4096];              // but only 16-bits for the length of any single string
+    iOffset = 0;                                         // output data offset
+    p = pImage->ucLZW;                                   // un-chunked LZW data
+    ulBits = INTELLONG(p);                               // start by reading some LZW data
+                                                         // set up the default symbols (0..iColors-1)
+    for (i = 0; i < iColors; i++)
+    {
+        pSymbols[i] = iUncompressedLen + i; // root symbols
+        pLengths[i] = 1;
+        buf[iUncompressedLen + i] = (unsigned char)i;
+    }
 init_codetable:
-   codesize = codestart + 1;
-   sMask = 0xffffffff << (codestart+1);
-   sMask = 0xffffffff - sMask;
-   nextcode = cc + 2;
-   nextlim = (1 << codesize);
+    codesize = codestart + 1;
+    sMask = 0xffffffff << (codestart + 1);
+    sMask = 0xffffffff - sMask;
+    nextcode = cc + 2;
+    nextlim = (1 << codesize);
     GET_CODE_TURBO
-    if (code == cc) { // we just reset the dictionary; get another code
+    if (code == cc)
+    { // we just reset the dictionary; get another code
         GET_CODE_TURBO
     }
-    buf[iOffset++] = (unsigned char) code; // first code after a dictionary reset is just stored
+    buf[iOffset++] = (unsigned char)code; // first code after a dictionary reset is just stored
     oldcode = code;
     GET_CODE_TURBO
-    while (code != eoi && iOffset < iUncompressedLen) { /* Loop through all the data */
-        if (code == cc) { /* Clear code? */
-           goto init_codetable;
+    while (code != eoi && iOffset < iUncompressedLen)
+    { /* Loop through all the data */
+        if (code == cc)
+        { /* Clear code? */
+            goto init_codetable;
         }
-        if (code != eoi) {
-            if (nextcode < nextlim) { // for deferred cc case, don't let it overwrite the last entry (fff)
-                if (code != nextcode) { // most probable case
+        if (code != eoi)
+        {
+            if (nextcode < nextlim)
+            { // for deferred cc case, don't let it overwrite the last entry (fff)
+                if (code != nextcode)
+                { // most probable case
                     iLen = LZWCopyBytes(buf, iOffset, &pSymbols[code], &pLengths[code]);
                     pSymbols[nextcode] = (pSymbols[oldcode] | 0x800000 | (buf[iOffset] << 24));
                     pLengths[nextcode] = pLengths[oldcode];
                     iOffset += iLen;
-                } else { // new code
+                }
+                else
+                { // new code
                     iLen = LZWCopyBytes(buf, iOffset, &pSymbols[oldcode], &pLengths[oldcode]);
-                    pLengths[nextcode] = iLen+1;
+                    pLengths[nextcode] = iLen + 1;
                     pSymbols[nextcode] = iOffset;
                     c = buf[iOffset];
                     iOffset += iLen;
                     buf[iOffset++] = c; // repeat first character of old code on the end
                 }
-            } else { // Deferred CC case - continue to use codes, but don't generate new ones
+            }
+            else
+            { // Deferred CC case - continue to use codes, but don't generate new ones
                 iLen = LZWCopyBytes(buf, iOffset, &pSymbols[code], &pLengths[code]);
                 iOffset += iLen;
             }
             nextcode++;
-            if (nextcode >= nextlim && codesize < MAX_CODE_SIZE) {
+            if (nextcode >= nextlim && codesize < MAX_CODE_SIZE)
+            {
                 codesize++;
                 nextlim <<= 1;
                 sMask = (sMask << 1) | 1;
             }
-            if (p >= pHighWater) {
+            if (p >= pHighWater)
+            {
                 pImage->iLZWOff = (int)(p - pImage->ucLZW); // restore object member var
-                GIFGetMoreData(pImage); // We need to read more LZW data
+                GIFGetMoreData(pImage);                     // We need to read more LZW data
                 p = &pImage->ucLZW[pImage->iLZWOff];
             }
             oldcode = code;
             GET_CODE_TURBO
         } /* while not end of LZW code stream */
     } // while not end of frame
-    if (pImage->ucDrawType == GIF_DRAW_COOKED && pImage->pFrameBuffer) { // convert each line through the palette
+    if (pImage->ucDrawType == GIF_DRAW_COOKED && pImage->pFrameBuffer)
+    { // convert each line through the palette
         GIFDRAW gd;
         uint32_t *pPal32 = NULL;
         gd.iX = pImage->iX;
@@ -1375,58 +1401,69 @@ init_codetable:
         gd.iHeight = pImage->iHeight;
         gd.pPalette = (pImage->bUseLocalPalette) ? pImage->pLocalPalette : pImage->pPalette;
         gd.pPalette24 = (uint8_t *)gd.pPalette; // just cast the pointer for RGB888
-        gd.ucIsGlobalPalette = pImage->bUseLocalPalette==1?0:1;
+        gd.ucIsGlobalPalette = pImage->bUseLocalPalette == 1 ? 0 : 1;
         gd.pUser = pImage->pUser;
         gd.ucPaletteType = pImage->ucPaletteType;
 #if defined(ARDUINO_ESP32S3_DEV) || defined(ARDUINO_ESP32S31_DEV) || defined(ARDUINO_ESP32P4_DEV)
-        if (pImage->ucPaletteType == GIF_PALETTE_RGB565_BE || pImage->ucPaletteType == GIF_PALETTE_RGB565_LE) { // use SIMD to speed up the palette conversion
+        if (pImage->ucPaletteType == GIF_PALETTE_RGB565_BE || pImage->ucPaletteType == GIF_PALETTE_RGB565_LE)
+        { // use SIMD to speed up the palette conversion
             uint16_t *pPal16 = (uint16_t *)gd.pPalette;
             pPal32 = (uint32_t *)malloc(1024); // 256 max palette entries
-            for (int i=0; i<pImage->iGlobalPalSize; i++) {
+            for (int i = 0; i < pImage->iGlobalPalSize; i++)
+            {
                 pPal32[i] = pPal16[i]; // expand 16->32bit entries for SIMD code
             }
         }
 
 #endif
-        for (int y=0; y<pImage->iHeight; y++) {
+        for (int y = 0; y < pImage->iHeight; y++)
+        {
             gd.y = y;
             gd.pPixels = &buf[(y * pImage->iWidth)]; // source pixels
             // Ugly logic to handle the interlaced line position, but it
             // saves having to have another set of state variables
-            if (pImage->ucMap & 0x40) { // interlaced?
-               int height = pImage->iHeight-1;
-               if (gd.y > height / 2)
-                  gd.y = gd.y * 2 - (height | 1);
-               else if (gd.y > height / 4)
-                  gd.y = gd.y * 4 - ((height & ~1) | 2);
-               else if (gd.y > height / 8)
-                  gd.y = gd.y * 8 - ((height & ~3) | 4);
-               else
-                  gd.y = gd.y * 8;
+            if (pImage->ucMap & 0x40)
+            { // interlaced?
+                int height = pImage->iHeight - 1;
+                if (gd.y > height / 2)
+                    gd.y = gd.y * 2 - (height | 1);
+                else if (gd.y > height / 4)
+                    gd.y = gd.y * 4 - ((height & ~1) | 2);
+                else if (gd.y > height / 8)
+                    gd.y = gd.y * 8 - ((height & ~3) | 4);
+                else
+                    gd.y = gd.y * 8;
             }
-            pImage->ucDisposalMethod = gd.ucDisposalMethod = (pImage->ucGIFBits & 0x1c)>>2;
+            pImage->ucDisposalMethod = gd.ucDisposalMethod = (pImage->ucGIFBits & 0x1c) >> 2;
             gd.ucTransparent = pImage->ucTransparent;
             gd.ucHasTransparency = pImage->ucGIFBits & 1;
             gd.ucBackground = pImage->ucBackground;
             gd.iCanvasWidth = pImage->iCanvasWidth;
-            if (pImage->pfnDraw) {
+            if (pImage->pfnDraw)
+            {
                 DrawCooked(pImage, &gd, &buf[pImage->iCanvasHeight * pImage->iCanvasWidth]); // dest = one line past end of canvas
-                gd.pPixels = &buf[pImage->iCanvasHeight * pImage->iCanvasWidth]; // point to the line we just converted
-                (*pImage->pfnDraw)(&gd); // callback to handle this line
-            } else if (pImage->pFrameBuffer) {
+                gd.pPixels = &buf[pImage->iCanvasHeight * pImage->iCanvasWidth];             // point to the line we just converted
+                (*pImage->pfnDraw)(&gd);                                                     // callback to handle this line
+            }
+            else if (pImage->pFrameBuffer)
+            {
                 uint16_t *d = (uint16_t *)&pImage->pFrameBuffer[pImage->iCanvasWidth * pImage->iCanvasHeight];
                 d += ((gd.y + gd.iY) * pImage->iCanvasWidth) + gd.iX;
-                if (pPal32) {
-#if defined (ARDUINO_ESP32S3_DEV) || defined (ARDUINO_ESP32P4_DEV) || defined(ARDUINO_ESP32S31_DEV)
+                if (pPal32)
+                {
+#if defined(ARDUINO_ESP32S3_DEV) || defined(ARDUINO_ESP32P4_DEV) || defined(ARDUINO_ESP32S31_DEV)
                     uint8_t *d8 = &pImage->pFrameBuffer[gd.iX + (gd.iY + gd.y) * pImage->iCanvasWidth];
                     GIF_cookPixels(gd.pPixels, d8, (pImage->ucGIFBits & 1) ? pImage->ucTransparent : -1, gd.iWidth, pPal32, d);
 #endif
-                } else {
+                }
+                else
+                {
                     DrawCooked(pImage, &gd, d);
                 }
             }
         }
-        if (pPal32) free(pPal32);
+        if (pPal32)
+            free(pPal32);
     }
     return iErr;
 } /* DecodeLZWTurbo() */
@@ -1458,15 +1495,16 @@ static void GIFMakePels(GIFIMAGE *pPage, unsigned int code)
     iPixCount = (int)(intptr_t)(pEnd + FILE_BUF_SIZE - s);
     while (iPixCount && pPage->iYCount > 0)
     {
-        if (pPage->iXCount > iPixCount)  /* Pixels fit completely on the line */
+        if (pPage->iXCount > iPixCount) /* Pixels fit completely on the line */
         {
             pEnd = buf + iPixCount;
-            while (buf < pEnd) {
+            while (buf < pEnd)
+            {
 #ifdef ALLOWS_UNALIGNED
-// This is a significant perf improvement compared to copying 1 byte at a time
-// even though it will often copy too many bytes. Since we're not at the end of
-// the line, it's okay to copy a few extra pixels.
-                BIGUINT tmp = *(BIGUINT *) s;
+                // This is a significant perf improvement compared to copying 1 byte at a time
+                // even though it will often copy too many bytes. Since we're not at the end of
+                // the line, it's okay to copy a few extra pixels.
+                BIGUINT tmp = *(BIGUINT *)s;
                 s += sizeof(BIGUINT);
                 *(BIGUINT *)buf = tmp;
                 buf += sizeof(BIGUINT);
@@ -1480,7 +1518,7 @@ static void GIFMakePels(GIFIMAGE *pPage, unsigned int code)
                 GIFGetMoreData(pPage); // We need to read more LZW data
             return;
         }
-        else  /* Pixels cross into next line */
+        else /* Pixels cross into next line */
         {
             GIFDRAW gd;
             pEnd = buf + pPage->iXCount;
@@ -1498,22 +1536,23 @@ static void GIFMakePels(GIFIMAGE *pPage, unsigned int code)
             gd.pPixels = pPage->pLineBufAligned;
             gd.pPalette = (pPage->bUseLocalPalette) ? pPage->pLocalPalette : pPage->pPalette;
             gd.pPalette24 = (uint8_t *)gd.pPalette; // just cast the pointer for RGB888
-            gd.ucIsGlobalPalette = pPage->bUseLocalPalette==1?0:1;
+            gd.ucIsGlobalPalette = pPage->bUseLocalPalette == 1 ? 0 : 1;
             gd.y = pPage->iHeight - pPage->iYCount;
             // Ugly logic to handle the interlaced line position, but it
             // saves having to have another set of state variables
-            if (pPage->ucMap & 0x40) { // interlaced?
-               int height = pPage->iHeight-1;
-               if (gd.y > height / 2)
-                  gd.y = gd.y * 2 - (height | 1);
-               else if (gd.y > height / 4)
-                  gd.y = gd.y * 4 - ((height & ~1) | 2);
-               else if (gd.y > height / 8)
-                  gd.y = gd.y * 8 - ((height & ~3) | 4);
-               else
-                  gd.y = gd.y * 8;
+            if (pPage->ucMap & 0x40)
+            { // interlaced?
+                int height = pPage->iHeight - 1;
+                if (gd.y > height / 2)
+                    gd.y = gd.y * 2 - (height | 1);
+                else if (gd.y > height / 4)
+                    gd.y = gd.y * 4 - ((height & ~1) | 2);
+                else if (gd.y > height / 8)
+                    gd.y = gd.y * 8 - ((height & ~3) | 4);
+                else
+                    gd.y = gd.y * 8;
             }
-            pPage->ucDisposalMethod = gd.ucDisposalMethod = (pPage->ucGIFBits & 0x1c)>>2;
+            pPage->ucDisposalMethod = gd.ucDisposalMethod = (pPage->ucGIFBits & 0x1c) >> 2;
             gd.ucTransparent = pPage->ucTransparent;
             gd.ucHasTransparency = pPage->ucGIFBits & 1;
             gd.ucBackground = pPage->ucBackground;
@@ -1523,36 +1562,42 @@ static void GIFMakePels(GIFIMAGE *pPage, unsigned int code)
             if (pPage->pFrameBuffer) // update the frame buffer
             {
                 int iPitch = 0, iBpp = 1, iOffset = pPage->iCanvasWidth * pPage->iCanvasHeight;
-                if (pPage->ucDrawType == GIF_DRAW_COOKED) {
-                    if (!pPage->pfnDraw) { // no draw callback, prepare the full frame
-                        switch (pPage->ucPaletteType) {
-                            case GIF_PALETTE_1BPP:
-                                iPitch = (pPage->iCanvasWidth + 7) / 8;
-                                break;
-                            case GIF_PALETTE_RGB565_BE:
-                            case GIF_PALETTE_RGB565_LE:
-                                iPitch = (pPage->iCanvasWidth * 2);
-                                iBpp = 2;
-                                break;
-                            case GIF_PALETTE_RGB888:
-                                iPitch = pPage->iCanvasWidth * 3;
-                                iBpp = 3;
-                                break;
-                            case GIF_PALETTE_RGB8888:
-                                iPitch = pPage->iCanvasWidth * 4;
-                                iBpp = 4;
-                                break;
+                if (pPage->ucDrawType == GIF_DRAW_COOKED)
+                {
+                    if (!pPage->pfnDraw)
+                    { // no draw callback, prepare the full frame
+                        switch (pPage->ucPaletteType)
+                        {
+                        case GIF_PALETTE_1BPP:
+                            iPitch = (pPage->iCanvasWidth + 7) / 8;
+                            break;
+                        case GIF_PALETTE_RGB565_BE:
+                        case GIF_PALETTE_RGB565_LE:
+                            iPitch = (pPage->iCanvasWidth * 2);
+                            iBpp = 2;
+                            break;
+                        case GIF_PALETTE_RGB888:
+                            iPitch = pPage->iCanvasWidth * 3;
+                            iBpp = 3;
+                            break;
+                        case GIF_PALETTE_RGB8888:
+                            iPitch = pPage->iCanvasWidth * 4;
+                            iBpp = 4;
+                            break;
                         }
                         iOffset += (iBpp * pPage->iX) + ((gd.y + pPage->iY) * iPitch);
                     }
                     DrawCooked(pPage, &gd, &pPage->pFrameBuffer[iOffset]);
                     // pass the cooked pixel pointer to the GIFDraw callback
                     gd.pPixels = &pPage->pFrameBuffer[iOffset];
-                } else { // the user will manage converting them through the palette
+                }
+                else
+                {                              // the user will manage converting them through the palette
                     DrawNewPixels(pPage, &gd); // merge the new opaque pixels
                 }
             }
-            if (pPage->pfnDraw) {
+            if (pPage->pfnDraw)
+            {
                 (*pPage->pfnDraw)(&gd); // callback to handle this line
             }
             pPage->iYCount--;
@@ -1568,10 +1613,16 @@ static void GIFMakePels(GIFIMAGE *pPage, unsigned int code)
 //
 // Macro to extract a variable length code
 //
-#define GET_CODE if (bitnum > (REGISTER_WIDTH - codesize)) { pImage->iLZWOff += (bitnum >> 3); \
-            bitnum &= 7; ulBits = INTELLONG(&p[pImage->iLZWOff]); } \
-        code = (unsigned short) (ulBits >> bitnum); /* Read a REGISTER_WIDTH chunk */ \
-        code &= sMask; bitnum += codesize;
+#define GET_CODE                                                                 \
+    if (bitnum > (REGISTER_WIDTH - codesize))                                    \
+    {                                                                            \
+        pImage->iLZWOff += (bitnum >> 3);                                        \
+        bitnum &= 7;                                                             \
+        ulBits = INTELLONG(&p[pImage->iLZWOff]);                                 \
+    }                                                                            \
+    code = (unsigned short)(ulBits >> bitnum); /* Read a REGISTER_WIDTH chunk */ \
+    code &= sMask;                                                               \
+    bitnum += codesize;
 //
 // Decode LZW into an image
 //
@@ -1583,40 +1634,47 @@ static int DecodeLZW(GIFIMAGE *pImage, int iOptions)
     signed short sMask;
     unsigned char c, *gifpels, *p;
     //    int iStripSize;
-    //unsigned char **index;
+    // unsigned char **index;
     BIGUINT ulBits;
     unsigned short code;
     (void)iOptions; // not used for now
     // if output can be used for string table, do it faster
     //       if (bGIF && (OutPage->cBitsperpixel == 8 && ((OutPage->iWidth & 3) == 0)))
     //          return PILFastLZW(InPage, OutPage, bGIF, iOptions);
-    if (pImage->ucDrawType == GIF_DRAW_COOKED && pImage->pFrameBuffer == NULL && pImage->pfnDraw == NULL) { // without a framebuffer and a GIFDRAW callback, we cannot continue
+    if (pImage->ucDrawType == GIF_DRAW_COOKED && pImage->pFrameBuffer == NULL && pImage->pfnDraw == NULL)
+    { // without a framebuffer and a GIFDRAW callback, we cannot continue
         pImage->iError = GIF_INVALID_PARAMETER;
         return 1; // indicate a problem
     }
     // If the user selected RAW output and there is no GIFDRAW callback, that won't work either
-    if (pImage->ucDrawType == GIF_DRAW_RAW && pImage->pfnDraw == NULL) {
+    if (pImage->ucDrawType == GIF_DRAW_RAW && pImage->pfnDraw == NULL)
+    {
         pImage->iError = GIF_INVALID_PARAMETER;
         return 1; // indicate a problem
     }
     // If we're generating fully 'cooked' output we can support disposal method 2
     // This requires that we know the size and position of the last frame so that we can
     // 'dispose' of it by filling it with the background color
-    if (pImage->ucDrawType == GIF_DRAW_COOKED && pImage->pFrameBuffer) {
+    if (pImage->ucDrawType == GIF_DRAW_COOKED && pImage->pFrameBuffer)
+    {
         // cooked output with a framebuffer
-        if (pImage->ucPrevDisp == 2) {
+        if (pImage->ucPrevDisp == 2)
+        {
             uint8_t *pActivePalette;
             uint16_t *pPal, u16BG, *d16;
             pActivePalette = (pImage->bUseLocalPalette) ? (uint8_t *)pImage->pLocalPalette : (uint8_t *)pImage->pPalette;
             pPal = (uint16_t *)pActivePalette;
             c = pImage->ucBackground;
-            for (int y=pImage->iPrevY; y < pImage->iPrevH + pImage->iPrevY; y++) {
+            for (int y = pImage->iPrevY; y < pImage->iPrevH + pImage->iPrevY; y++)
+            {
                 p = &pImage->pFrameBuffer[(y * pImage->iCanvasWidth) + pImage->iPrevX];
                 memset(p, c, pImage->iPrevW); // restore 8-bit image to background color
-                if (pImage->ucPaletteType == GIF_PALETTE_RGB565_LE || pImage->ucPaletteType == GIF_PALETTE_RGB565_BE) {
+                if (pImage->ucPaletteType == GIF_PALETTE_RGB565_LE || pImage->ucPaletteType == GIF_PALETTE_RGB565_BE)
+                {
                     u16BG = pPal[c];
-                    d16 = (uint16_t *)&pImage->pFrameBuffer[(pImage->iCanvasWidth * pImage->iCanvasHeight) + (y * pImage->iCanvasWidth*2) + (pImage->iPrevX * 2)];
-                    for (i=0; i<pImage->iPrevW; i++) {
+                    d16 = (uint16_t *)&pImage->pFrameBuffer[(pImage->iCanvasWidth * pImage->iCanvasHeight) + (y * pImage->iCanvasWidth * 2) + (pImage->iPrevX * 2)];
+                    for (i = 0; i < pImage->iPrevW; i++)
+                    {
                         d16[i] = u16BG;
                     }
                 }
@@ -1633,14 +1691,14 @@ static int DecodeLZW(GIFIMAGE *pImage, int iOptions)
     pImage->iYCount = pImage->iHeight; // count down the lines
     pImage->iXCount = pImage->iWidth;
     bitnum = 0;
-    pImage->iLZWOff = 0; // Offset into compressed data
+    pImage->iLZWOff = 0;    // Offset into compressed data
     GIFGetMoreData(pImage); // Read some data to start
 
     // Initialize code table
     // this part only needs to be initialized once
     for (i = 0; i < cc; i++)
     {
-        gifpels[PIXEL_FIRST + i] = gifpels[PIXEL_LAST + i] = (unsigned short) i;
+        gifpels[PIXEL_FIRST + i] = gifpels[PIXEL_LAST + i] = (unsigned short)i;
         giftabs[i] = LINK_END;
     }
 init_codetable:
@@ -1648,14 +1706,14 @@ init_codetable:
     sMask = 0xffff << (pImage->ucCodeStart + 1);
     sMask = 0xffff - sMask;
     nextcode = cc + 2;
-    nextlim = (unsigned short) ((1 << codesize));
+    nextlim = (unsigned short)((1 << codesize));
     // This part of the table needs to be reset multiple times
-    memset(&giftabs[cc], LINK_UNUSED, sizeof(pImage->usGIFTable) - sizeof(giftabs[0])*cc);
+    memset(&giftabs[cc], LINK_UNUSED, sizeof(pImage->usGIFTable) - sizeof(giftabs[0]) * cc);
     ulBits = INTELLONG(&p[pImage->iLZWOff]); // start by reading 4 bytes of LZW data
     GET_CODE
     if (code == cc) // we just reset the dictionary, so get another code
     {
-      GET_CODE
+        GET_CODE
     }
     c = oldcode = code;
     GIFMakePels(pImage, code); // first code is output as the first pixel
@@ -1667,24 +1725,25 @@ init_codetable:
             goto init_codetable;
         if (code != eoi)
         {
-                if (nextcode < nextlim) // for deferred cc case, don't let it overwrite the last entry (fff)
-                {
-                    giftabs[nextcode] = oldcode;
-                    gifpels[PIXEL_FIRST + nextcode] = c; // oldcode pixel value
-                    gifpels[PIXEL_LAST + nextcode] = c = gifpels[PIXEL_FIRST + code];
-                }
-                nextcode++;
-                if (nextcode >= nextlim && codesize < MAX_CODE_SIZE)
-                {
-                    codesize++;
-                    nextlim <<= 1;
-                    sMask = nextlim - 1;
-                }
+            if (nextcode < nextlim) // for deferred cc case, don't let it overwrite the last entry (fff)
+            {
+                giftabs[nextcode] = oldcode;
+                gifpels[PIXEL_FIRST + nextcode] = c; // oldcode pixel value
+                gifpels[PIXEL_LAST + nextcode] = c = gifpels[PIXEL_FIRST + code];
+            }
+            nextcode++;
+            if (nextcode >= nextlim && codesize < MAX_CODE_SIZE)
+            {
+                codesize++;
+                nextlim <<= 1;
+                sMask = nextlim - 1;
+            }
             GIFMakePels(pImage, code);
             oldcode = code;
         }
     } /* while not end of LZW code stream */
-    if (pImage->ucDisposalMethod == 2) {
+    if (pImage->ucDisposalMethod == 2)
+    {
         // Save this info because we need to dispose of this frame area the next time
         // through the decoder. Disposal method 2 says to erase the 'previous' frame to
         // the background color, so we need to save it's size and position
@@ -1695,15 +1754,15 @@ init_codetable:
     }
     pImage->ucPrevDisp = pImage->ucDisposalMethod;
     return 0;
-//gif_forced_error:
-//    free(pImage->pPixels);
-//    pImage->pPixels = NULL;
-//    return -1;
+    // gif_forced_error:
+    //     free(pImage->pPixels);
+    //     pImage->pPixels = NULL;
+    //     return -1;
 } /* DecodeLZW() */
 
 void GIF_setDrawCallback(GIFIMAGE *pGIF, GIF_DRAW_CALLBACK *pfnDraw)
 {
-   pGIF->pfnDraw = pfnDraw;
+    pGIF->pfnDraw = pfnDraw;
 } /* GIF_setDrawCallback() */
 //
 // Scale 2 scanlines down by 50% with pixel averaging
@@ -1712,25 +1771,26 @@ void GIF_setDrawCallback(GIFIMAGE *pGIF, GIF_DRAW_CALLBACK *pfnDraw)
 //
 void GIF_scaleHalf(uint16_t *pCurrent, uint16_t *pPrev, int iWidth, int bBigEndian)
 {
-int x;
-uint16_t *d = pPrev;
-uint32_t gSum, rbSum, pix0,pix1,pix2,pix3;
-const uint32_t RBMask = 0xf81f, GMask = 0x7e0;
+    int x;
+    uint16_t *d = pPrev;
+    uint32_t gSum, rbSum, pix0, pix1, pix2, pix3;
+    const uint32_t RBMask = 0xf81f, GMask = 0x7e0;
 
-   for (x=0; x<iWidth; x+=2)
-   {
-      pix0 = pCurrent[0]; pix1 = pCurrent[1];
-      pix2 = pPrev[0]; pix3 = pPrev[1];
-      pCurrent += 2; pPrev += 2;
-      gSum = (pix0 & GMask) + (pix1 & GMask) + (pix2 & GMask) + (pix3 & GMask);
-      gSum = ((gSum + 0x40) >> 2) & GMask; // for rounding towards 1
-      rbSum = (pix0 & RBMask) + (pix1 & RBMask) + (pix2 & RBMask) + (pix3 & RBMask);
-      rbSum = ((rbSum + 0x1002) >> 2) & RBMask;
-      if (bBigEndian)
-         *d++ = __builtin_bswap16((uint16_t)(gSum + rbSum));
-      else
-         *d++ = (uint16_t)(gSum + rbSum); // store finished pixel
-   } // for x
-} /* GIF_scaleHalf() */
-
-
+    for (x = 0; x < iWidth; x += 2)
+    {
+        pix0 = pCurrent[0];
+        pix1 = pCurrent[1];
+        pix2 = pPrev[0];
+        pix3 = pPrev[1];
+        pCurrent += 2;
+        pPrev += 2;
+        gSum = (pix0 & GMask) + (pix1 & GMask) + (pix2 & GMask) + (pix3 & GMask);
+        gSum = ((gSum + 0x40) >> 2) & GMask; // for rounding towards 1
+        rbSum = (pix0 & RBMask) + (pix1 & RBMask) + (pix2 & RBMask) + (pix3 & RBMask);
+        rbSum = ((rbSum + 0x1002) >> 2) & RBMask;
+        if (bBigEndian)
+            *d++ = __builtin_bswap16((uint16_t)(gSum + rbSum));
+        else
+            *d++ = (uint16_t)(gSum + rbSum); // store finished pixel
+    } // for x
+}
