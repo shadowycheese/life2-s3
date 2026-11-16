@@ -17,7 +17,7 @@ static const char *TAG = "HUB75";
 
 Hub75Driver::Hub75Driver() = default;
 
-#define CLOCK_DIVIDER (16)
+#define CLOCK_DIVIDER (32)
 
 bool Hub75Driver::init()
 {
@@ -209,21 +209,24 @@ void Hub75Driver::encode_frame(const uint16_t *fb)
 
                 if (c >= 64)
                 {
-                    r1 = fb[(size_t)(63 - g) * _width + c2];
-                    r2 = fb[(size_t)(63 - (g + _rows)) * _width + c2];
+                    r1 = fb[(size_t)(63 - g) * _width + (63 - c2)];
+                    r2 = fb[(size_t)(63 - (g + _rows)) * _width + (63 - c2)];
                 }
                 else
                 {
-                    r1 = fb[(size_t)g * _width + (63 - c2)];
-                    r2 = fb[(size_t)(g + _rows) * _width + (63 - c2)];
+                    r1 = fb[(size_t)g * _width + c2];
+                    r2 = fb[(size_t)(g + _rows) * _width + c2];
                 }
 
+                r1 = (g == 0) ? 0 : r1;
+                r2 = 0;
+
                 w |= ((r1 >> 8) & 0xF) > p ? (1 << BitR1) : 0;
-                w |= ((r1 >> 4) & 0xF) > p ? (1 << BitG1) : 0;
-                w |= ((r1) & 0xF) > p ? (1 << BitB1) : 0;
+                w |= ((r1 >> 4) & 0xF) > p ? (1 << BitB1) : 0;
+                w |= ((r1) & 0xF) > p ? (1 << BitG1) : 0;
                 w |= ((r2 >> 8) & 0xF) > p ? (1 << BitR2) : 0;
-                w |= ((r2 >> 4) & 0xF) > p ? (1 << BitG2) : 0;
-                w |= ((r2) & 0xF) > p ? (1 << BitB2) : 0;
+                w |= ((r2 >> 4) & 0xF) > p ? (1 << BitB2) : 0;
+                w |= ((r2) & 0xF) > p ? (1 << BitG2) : 0;
             }
 
             if (c == (panel_width - 1))

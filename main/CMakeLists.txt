@@ -5,12 +5,16 @@ idf_component_register(SRCS
                         "io/espio.c"
                         "io/encoder.cpp"
                         "io/bluetooth.cpp"
+                        "gif/AnimatedGIF.cpp"
+                        "gif/gif.inl"
                        INCLUDE_DIRS 
                         "."
                         "matrix/"
                         "matrix/gfx"
                         "io/"
                         "simulation/"
+                        "gif/"
+                        "gif/sample"
                        REQUIRES 
                         driver
                         bt

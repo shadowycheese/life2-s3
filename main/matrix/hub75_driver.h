@@ -5,24 +5,25 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define PIN_B1 GPIO_NUM_7
-#define PIN_R1 GPIO_NUM_1
-#define PIN_G1 GPIO_NUM_8
-#define PIN_R2 GPIO_NUM_6
-#define PIN_B2 GPIO_NUM_4
-#define PIN_G2 GPIO_NUM_5
-#define PIN_CLK GPIO_NUM_3
-#define PIN_LAT GPIO_NUM_2
+#define PIN_R1 GPIO_NUM_2
+#define PIN_G1 GPIO_NUM_1
+#define PIN_B1 GPIO_NUM_3
+#define PIN_R2 GPIO_NUM_5
+#define PIN_G2 GPIO_NUM_4
+#define PIN_B2 GPIO_NUM_6
 
-#define PIN_OE GPIO_NUM_12
-#define PIN_A GPIO_NUM_13
-#define PIN_B GPIO_NUM_9
-#define PIN_C GPIO_NUM_10
-#define PIN_D GPIO_NUM_11
+#define PIN_A GPIO_NUM_8
+#define PIN_B GPIO_NUM_7
+#define PIN_C GPIO_NUM_12
+#define PIN_D GPIO_NUM_13
+
+#define PIN_CLK GPIO_NUM_10
+#define PIN_LAT GPIO_NUM_11
+#define PIN_OE GPIO_NUM_9
 
 #define PANEL_WIDTH 64
-#define PANEL_HEIGHT 64
-#define PANEL_COUNT 2
+#define PANEL_HEIGHT 32
+#define PANEL_COUNT 1
 
 class Hub75Driver
 {
@@ -85,7 +86,7 @@ private:
     void configure_gpio();
     bool allocate_dma();
     void build_descriptors();
-    void encode_frame(const uint16_t *fb_64x32);
+    void encode_frame(const uint16_t *fb_64x64);
 
     void *_dma_chan = nullptr;
     void *_descriptors = nullptr;

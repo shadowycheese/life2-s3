@@ -1,1 +1,1 @@
-ESP_PORT=/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_28:84:85:67:92:E0-if00
+ESP_PORT=/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_28:84:85:67:D6:D4-if00

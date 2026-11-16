@@ -55,6 +55,8 @@ typedef struct
     float s;
 } band_t;
 
+#define ap(x, y) (((y) * _width) + (x))
+
 class Simulation
 {
 public:
@@ -68,8 +70,11 @@ public:
 
         size_t grid_bytes = sizeof(cell_t) * array_size;
 
-        _grid = (cell_t *)(void *)heap_caps_aligned_alloc(4, grid_bytes, MALLOC_CAP_INTERNAL);
-        _temp_grid = (cell_t *)(void *)heap_caps_aligned_alloc(4, grid_bytes, MALLOC_CAP_INTERNAL);
+        _grid_1 = (cell_t *)(void *)heap_caps_aligned_alloc(4, grid_bytes, MALLOC_CAP_INTERNAL);
+        _grid_2 = (cell_t *)(void *)heap_caps_aligned_alloc(4, grid_bytes, MALLOC_CAP_INTERNAL);
+
+        _grid = _grid_1;
+        _temp_grid = _grid_2;
 
         reset();
 
@@ -114,14 +119,14 @@ public:
 
     inline float set_feed_rate(float feed_rate)
     {
-        _feed_rate = constrain(feed_rate, 0.0, 1.0);
+        _feed_rate = constrain(feed_rate, 0.0f, 1.0f);
 
         return _feed_rate;
     }
 
     inline float set_kill_rate(float kill_rate)
     {
-        _kill_rate = constrain(kill_rate, 0.0, 1.0);
+        _kill_rate = constrain(kill_rate, 0.0f, 1.0f);
 
         return _kill_rate;
     }
@@ -234,6 +239,9 @@ private:
 
     int _hue;
 
+    cell_t *_grid_1;
+    cell_t *_grid_2;
+
     cell_t *_grid;
     cell_t *_temp_grid;
 
@@ -314,7 +322,7 @@ private:
         _grid[random() % (_width * _height)].B = 1.0f;
     }
 
-    inline int ap(int x, int y)
+    inline int ap1(int x, int y)
     {
         return (y * _width) + x;
     }
@@ -324,7 +332,7 @@ private:
         return (a % b + b) % b;
     }
 
-    double constrain(double value, double low, double high)
+    float constrain(float value, float low, float high)
     {
         return value > high ? high : (value < low ? low : value);
     }
@@ -359,13 +367,24 @@ private:
             }
         }
 
-        int as = _width * _height;
-
-        for (int i = 0; i < as; i++)
+        if (_grid == _grid_1)
         {
-            _grid[i].A = _temp_grid[i].A;
-            _grid[i].B = _temp_grid[i].B;
+            _grid = _grid_2;
+            _temp_grid = _grid_1;
         }
+        else
+        {
+            _grid = _grid_1;
+            _temp_grid = _grid_2;
+        }
+
+        /*        int as = _width * _height;
+
+                for (int i = 0; i < as; i++)
+                {
+                    _grid[i].A = _temp_grid[i].A;
+                    _grid[i].B = _temp_grid[i].B;
+                }*/
     }
 };
 #endif

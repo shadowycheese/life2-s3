@@ -13,7 +13,11 @@
 #include <esp_timer.h>
 #include "nvs_flash.h"
 #include "nvs.h"
+#include "gif/GIFPlayer.h"
+#include "gif/sample/sf.h"
+#include "gif/sample/test.h"
 
+GIFPlayer gifplayer;
 Hub75Driver hub75_driver;
 Display display(&hub75_driver);
 RotaryEncoders encoders;
@@ -412,7 +416,7 @@ void sim_task(void *)
 {
     ESP_LOGI(APP_TAG, "Running main loop on core %d", xPortGetCoreID());
 
-    const TickType_t delay_period = pdMS_TO_TICKS(TICK_SIZE * 10);
+    const TickType_t delay_period = pdMS_TO_TICKS(TICK_SIZE * 7);
 
     TickType_t last_wake_time = xTaskGetTickCount();
 
@@ -439,10 +443,6 @@ void sim_task(void *)
             }
         }
 
-        // display.drawRect(0, 0, 64, 64, 0xC00);
-        // display.drawRect(10, 10, 44, 44, 0x0C0);
-        // display.drawRect(20, 20, 24, 24, 0x00C);
-
         if (now < overlay_expiry)
         {
             draw_overlay();
@@ -454,12 +454,43 @@ void sim_task(void *)
 
         int took = (int)(t - now);
 
-        if (took > 100000)
+        if (took > 100000 || ((i % 30) == 0))
         {
             ESP_LOGW(APP_TAG, "Simulator loop took too long [%dus]\n", took);
         }
 
         vTaskDelayUntil(&last_wake_time, delay_period);
+    }
+}
+
+void gif_task(void *)
+{
+    ESP_LOGI(APP_TAG, "Running main loop on core %d", xPortGetCoreID());
+
+    gifplayer.openData(&display, test_gif, test_gif_len);
+
+    const TickType_t delay_period = pdMS_TO_TICKS(TICK_SIZE * 5);
+
+    TickType_t last_wake_time = xTaskGetTickCount();
+
+    for (int i = 0;; i++)
+    {
+        display.clear_screen();
+
+        int delay = 2000; // gifplayer.play();
+
+        for (int x = 10; x < 20; x++)
+        {
+            // display.draw_pixel(x, 1, 0x400 + x);
+            display.draw_pixel(x, 15, 0x400 + x);
+        }
+        // display.drawRect(x, y, 21, 21, 0xC00);
+        // display.drawRect(x + 1, y + 1, 19, 19, 0x0C0);
+        // display.fillRect(x + 2, y + 2, 17, 17, 0x00C);
+
+        display.commit_frame();
+
+        vTaskDelay(pdMS_TO_TICKS(delay));
     }
 }
 
@@ -484,5 +515,6 @@ extern "C" void app_main(void)
 
     overlay_expiry = esp_timer_get_time() + 2000000LL;
 
-    xTaskCreatePinnedToCore(sim_task, "sim_task", 4096, NULL, 5, NULL, 1);
+    // xTaskCreatePinnedToCore(sim_task, "sim_task", 4096, NULL, 5, NULL, 1);
+    xTaskCreatePinnedToCore(gif_task, "gif_task", 4096, NULL, 5, NULL, 1);
 }
