@@ -21,13 +21,14 @@ Cross Waves    | 0.012   | 0.045
 Mixed          | 0.022   | 0.051
 */
 
+#include "esp_log.h"
+#include "simulation/sim_model.h"
+#include <esp_heap_caps.h>
+#include <esp_random.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <esp_heap_caps.h>
 #include <time.h>
-#include <math.h>
-#include <esp_random.h>
-#include "simulation/sim_model.h"
 
 typedef struct
 {
@@ -59,7 +60,7 @@ typedef struct
 
 class Simulation
 {
-public:
+  public:
     void init(int width, int height)
     {
         _width = width;
@@ -73,10 +74,12 @@ public:
         _grid_1 = (cell_t *)(void *)heap_caps_aligned_alloc(4, grid_bytes, MALLOC_CAP_INTERNAL);
         _grid_2 = (cell_t *)(void *)heap_caps_aligned_alloc(4, grid_bytes, MALLOC_CAP_INTERNAL);
 
+        ESP_LOGI("SIM", "Allocated: %dx2: g1=%08X, g2=%08X", grid_bytes, _grid_1, _grid_2);
+
         _grid = _grid_1;
         _temp_grid = _grid_2;
 
-        reset();
+        // reset();
 
         _spawn_chance = 1250;
         _feed_rate = _presets[8].feed_rate;
@@ -105,10 +108,7 @@ public:
         config->magic = SIM_CONFIG_MAGIC;
     }
 
-    inline int spawn_chance()
-    {
-        return _spawn_chance;
-    }
+    inline int spawn_chance() { return _spawn_chance; }
 
     inline int set_spawn_chance(int spawn_chance)
     {
@@ -131,25 +131,13 @@ public:
         return _kill_rate;
     }
 
-    inline float kill_rate()
-    {
-        return _kill_rate;
-    }
+    inline float kill_rate() { return _kill_rate; }
 
-    inline float feed_rate()
-    {
-        return _feed_rate;
-    }
+    inline float feed_rate() { return _feed_rate; }
 
-    inline void next_hue()
-    {
-        _hue = (_hue + 1) % 6;
-    }
+    inline void next_hue() { _hue = (_hue + 1) % 6; }
 
-    inline void add(int16_t x, int16_t y)
-    {
-        _grid[ap(x, y)].B = 1.0f;
-    }
+    inline void add(int16_t x, int16_t y) { _grid[ap(x, y)].B = 1.0f; }
 
     void reset()
     {
@@ -215,7 +203,7 @@ public:
         return map_grayscott_rgb444(l) & 0xFFF;
     }
 
-private:
+  private:
     const sim_preset_t _presets[15] = {
         {"Mitosos", 0.0367, 0.0649}, // Mitosis
         {"Coral", 0.0545, 0.062},    // Coral Growth
@@ -251,16 +239,11 @@ private:
     float _kill_rate;
     int16_t _spawn_chance;
 
-    float interp(float from, float to, float val)
-    {
-        return (from + ((to - from) * val));
-    }
+    float interp(float from, float to, float val) { return (from + ((to - from) * val)); }
 
     const band_t _bands[5] = {
-        {.r = 0.0f, .g = 0.0f, .b = 0.0f, .s = 0.00f},
-        {.r = 4.0f, .g = 1.0f, .b = 9.0f, .s = 0.40f},
-        {.r = 9.0f, .g = 0.0f, .b = 13.0f, .s = 0.60f},
-        {.r = 11.0f, .g = 3.0f, .b = 2.0f, .s = 0.80f},
+        {.r = 0.0f, .g = 0.0f, .b = 0.0f, .s = 0.00f},  {.r = 4.0f, .g = 1.0f, .b = 9.0f, .s = 0.40f},
+        {.r = 9.0f, .g = 0.0f, .b = 13.0f, .s = 0.60f}, {.r = 11.0f, .g = 3.0f, .b = 2.0f, .s = 0.80f},
         {.r = 9.0f, .g = 8.0f, .b = 1.0f, .s = 1.00f},
     };
     const float r0 = 0.0f, g0 = 0.0f, b0 = 0.0f;
@@ -317,25 +300,13 @@ private:
         }
     }
 
-    inline void spawn()
-    {
-        _grid[random() % (_width * _height)].B = 1.0f;
-    }
+    inline void spawn() { _grid[random() % (_width * _height)].B = 1.0f; }
 
-    inline int ap1(int x, int y)
-    {
-        return (y * _width) + x;
-    }
+    inline int ap1(int x, int y) { return (y * _width) + x; }
 
-    inline int emod(int a, int b)
-    {
-        return (a % b + b) % b;
-    }
+    inline int emod(int a, int b) { return (a % b + b) % b; }
 
-    float constrain(float value, float low, float high)
-    {
-        return value > high ? high : (value < low ? low : value);
-    }
+    float constrain(float value, float low, float high) { return value > high ? high : (value < low ? low : value); }
 
     float laplacian_func(int x, int y, bool type)
     {
@@ -344,10 +315,13 @@ private:
         int up = emod(y - 1, _height);
         int down = emod(y + 1, _height);
 
-        return (type ? (0.2 * (_grid[ap(right, y)].A + _grid[ap(left, y)].A + _grid[ap(x, down)].A + _grid[ap(x, up)].A) +
-                        0.05 * (_grid[ap(left, up)].A + _grid[ap(right, up)].A + _grid[ap(left, down)].A + _grid[ap(right, down)].A) - _grid[ap(x, y)].A)
-                     : (0.2 * (_grid[ap(right, y)].B + _grid[ap(left, y)].B + _grid[ap(x, down)].B + _grid[ap(x, up)].B) +
-                        0.05 * (_grid[ap(left, up)].B + _grid[ap(right, up)].B + _grid[ap(left, down)].B + _grid[ap(right, down)].B) - _grid[ap(x, y)].B));
+        return (
+            type ? (0.2 * (_grid[ap(right, y)].A + _grid[ap(left, y)].A + _grid[ap(x, down)].A + _grid[ap(x, up)].A) +
+                    0.05 * (_grid[ap(left, up)].A + _grid[ap(right, up)].A + _grid[ap(left, down)].A + _grid[ap(right, down)].A) -
+                    _grid[ap(x, y)].A)
+                 : (0.2 * (_grid[ap(right, y)].B + _grid[ap(left, y)].B + _grid[ap(x, down)].B + _grid[ap(x, up)].B) +
+                    0.05 * (_grid[ap(left, up)].B + _grid[ap(right, up)].B + _grid[ap(left, down)].B + _grid[ap(right, down)].B) -
+                    _grid[ap(x, y)].B));
     }
 
     void step_simulation()
@@ -361,9 +335,10 @@ private:
                 _temp_grid[p].A = constrain(_grid[p].A + (_D_A * laplacian_func(x, y, true) -
                                                           _grid[p].A * _grid[p].B * _grid[p].B + _feed_rate * (1 - _grid[p].A)),
                                             0, 1);
-                _temp_grid[p].B = constrain(_grid[p].B + (_D_B * laplacian_func(x, y, false) +
-                                                          _grid[p].A * _grid[p].B * _grid[p].B - (_kill_rate + _feed_rate) * _grid[p].B),
-                                            0, 1);
+                _temp_grid[p].B =
+                    constrain(_grid[p].B + (_D_B * laplacian_func(x, y, false) + _grid[p].A * _grid[p].B * _grid[p].B -
+                                            (_kill_rate + _feed_rate) * _grid[p].B),
+                              0, 1);
             }
         }
 

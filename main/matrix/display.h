@@ -1,11 +1,11 @@
 #ifndef Display_h_
 #define Display_h_
 
-#include <driver/gpio.h>
-#include <string.h>
-#include <esp_heap_caps.h>
-#include "matrix/hub75_driver.h"
 #include "matrix/gfx/Adafruit_GFX.h"
+#include "matrix/hub75_driver.h"
+#include <driver/gpio.h>
+#include <esp_heap_caps.h>
+#include <string.h>
 
 #define COL_BLACK 0x00
 #define COL_RED 0xF00
@@ -22,7 +22,7 @@
 
 class Display : public Adafruit_GFX
 {
-public:
+  public:
     Display(Hub75Driver *driver) : Adafruit_GFX(driver->width(), driver->height())
     {
         _driver = driver;
@@ -34,30 +34,18 @@ public:
     {
         size_t buf_size = _width * _height * sizeof(uint16_t);
 
-        _frame_buffer = (uint16_t *)heap_caps_aligned_alloc(4, buf_size, MALLOC_CAP_DEFAULT);
+        _frame_buffer = (uint16_t *)heap_caps_aligned_alloc(4, buf_size, MALLOC_CAP_INTERNAL);
 
         clear_screen();
     }
 
-    inline int width()
-    {
-        return _driver->width();
-    }
+    inline int width() { return _driver->width(); }
 
-    inline int height()
-    {
-        return _driver->height();
-    }
+    inline int height() { return _driver->height(); }
 
-    void drawPixel(int16_t x, int16_t y, uint16_t col)
-    {
-        draw_pixel(x, y, col);
-    }
+    void drawPixel(int16_t x, int16_t y, uint16_t col) { draw_pixel(x, y, col); }
 
-    uint16_t get_pixel(int16_t x, int16_t y)
-    {
-        return _frame_buffer[(y * PANEL_WIDTH) + x];
-    }
+    uint16_t get_pixel(int16_t x, int16_t y) { return _frame_buffer[(y * PANEL_WIDTH) + x]; }
 
     void draw_pixel(int16_t x, int16_t y, uint16_t col)
     {
@@ -77,17 +65,11 @@ public:
         _frame_buffer[(y * PANEL_WIDTH) + x] = col;
     }
 
-    void commit_frame()
-    {
-        _driver->set_frame_buffer(&_frame_buffer[0]);
-    }
+    void commit_frame() { _driver->set_frame_buffer(&_frame_buffer[0]); }
 
-    void clear_screen()
-    {
-        memset(&_frame_buffer[0], 0, 2 * _width * _height);
-    }
+    void clear_screen() { memset(&_frame_buffer[0], 0, 2 * _width * _height); }
 
-private:
+  private:
     uint16_t *_frame_buffer;
 
     int _width;

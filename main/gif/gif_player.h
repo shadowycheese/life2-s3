@@ -1,15 +1,16 @@
+#include "esp_log.h"
 #include "gif/animated_gif.h"
 #include "matrix/display.h"
-#include "esp_log.h"
 
 class GIFPlayer
 {
-public:
+  public:
     void init(Display *display)
     {
         _display = display;
         _turbo_buffer = (uint8_t *)heap_caps_aligned_alloc(16, TURBO_BUFFER_SIZE + (64 * 64), MALLOC_CAP_SPIRAM);
-        _buffer = (uint8_t *)heap_caps_aligned_alloc(16, (64 * 64), MALLOC_CAP_SPIRAM);
+        _buffer = (uint8_t *)heap_caps_aligned_alloc(16, 4 * (64 * 64), MALLOC_CAP_SPIRAM);
+        ESP_LOGI(TAG, "Frame buf: %08X", _buffer);
     }
 
     int openData(const void *gif_data, int gif_size)
@@ -18,7 +19,7 @@ public:
 
         if (_gif.open((uint8_t *)gif_data, gif_size, NULL))
         {
-            ESP_LOGI("GIF", "Opened gif file (%dx%d)", _gif.getCanvasWidth(), _gif.getCanvasHeight());
+            ESP_LOGI(TAG, "Opened gif file (%dx%d)", _gif.getCanvasWidth(), _gif.getCanvasHeight());
 
             _gif.setTurboBuf(_turbo_buffer);
             _gif.setFrameBuf(_buffer);
@@ -26,7 +27,7 @@ public:
         }
         else
         {
-            ESP_LOGI("GIF", "Could not open gif");
+            ESP_LOGI(TAG, "Could not open gif");
             return GIF_FILE_NOT_OPEN;
         }
 
@@ -52,6 +53,7 @@ public:
         }
 
         pixels = (uint16_t *)(_gif.getFrameBuf() + (cw * ch));
+
         pixels += xo + (yo * cw);
 
         for (int ty = 0; ty < h; ty++)
@@ -59,9 +61,7 @@ public:
             for (int tx = 0; tx < w; tx++)
             {
                 uint16_t c1 = ((pixels[tx] >> 8) & 0xFF) | ((pixels[tx] & 0xFF) << 8);
-                uint16_t c2 = RGB((c1 >> 12),
-                                  (c1 >> 7),
-                                  c1);
+                uint16_t c2 = RGB((c1 >> 12), (c1 >> 7), c1);
 
                 int xx = xo + tx;
                 int yy = yo + ty;
@@ -80,7 +80,9 @@ public:
         return 0;
     }
 
-protected:
+  protected:
+    static constexpr const char *TAG = "GIF";
+
     uint8_t *_buffer;
     uint8_t *_turbo_buffer;
     AnimatedGIF _gif;

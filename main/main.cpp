@@ -1,21 +1,19 @@
 #include "driver/gpio.h"
-#include "io/espio.h"
-#include <esp_log.h>
-#include <freertos/FreeRTOS.h>
-#include "matrix/display.h"
-#include "matrix/hub75_driver.h"
-#include "nvs_flash.h"
-#include "nvs.h"
-#include <stdio.h>
-#include "simulation/simulation.h"
-#include "io/bluetooth.h"
-#include "io/encoder.h"
-#include <esp_timer.h>
-#include "nvs_flash.h"
-#include "nvs.h"
 #include "gif/gif_player.h"
 #include "gif/sample/sf.h"
 #include "gif/sample/test.h"
+#include "io/bluetooth.h"
+#include "io/encoder.h"
+#include "io/espio.h"
+#include "matrix/display.h"
+#include "matrix/hub75_driver.h"
+#include "nvs.h"
+#include "nvs_flash.h"
+#include "simulation/simulation.h"
+#include <esp_log.h>
+#include <esp_timer.h>
+#include <freertos/FreeRTOS.h>
+#include <stdio.h>
 
 GIFPlayer gifplayer;
 Hub75Driver hub75_driver;
@@ -27,33 +25,8 @@ uint64_t overlay_expiry;
 bool preset_changed;
 uint64_t save_configuration_time;
 
-const int spawn_chances[25] =
-    {
-        0,
-        1,
-        10,
-        20,
-        25,
-        50,
-        75,
-        100,
-        150,
-        200,
-        250,
-        300,
-        500,
-        750,
-        1000,
-        1250,
-        1500,
-        1750,
-        2000,
-        2500,
-        3000,
-        3500,
-        4000,
-        4500,
-        5000,
+const int spawn_chances[25] = {
+    0, 1, 10, 20, 25, 50, 75, 100, 150, 200, 250, 300, 500, 750, 1000, 1250, 1500, 1750, 2000, 2500, 3000, 3500, 4000, 4500, 5000,
 };
 
 const char *APP_TAG = "APP";
@@ -118,7 +91,8 @@ void sim_configuration_writer(void *)
 
             if (err == ESP_OK)
             {
-                ESP_LOGI(APP_TAG, "Saved config: Feed rate: %0.5f, Kill rate: %0.5f, Spawn chance: %d", config.feed_rate, config.kill_rate, config.spawn_chance);
+                ESP_LOGI(APP_TAG, "Saved config: Feed rate: %0.5f, Kill rate: %0.5f, Spawn chance: %d", config.feed_rate,
+                         config.kill_rate, config.spawn_chance);
             }
             else
             {
@@ -144,7 +118,8 @@ void sim_configuration_init()
         }
         else
         {
-            ESP_LOGI(APP_TAG, "Loaded config: Feed rate: %0.5f, Kill rate: %0.5f, Spawn chance: %d", config.feed_rate, config.kill_rate, config.spawn_chance);
+            ESP_LOGI(APP_TAG, "Loaded config: Feed rate: %0.5f, Kill rate: %0.5f, Spawn chance: %d", config.feed_rate,
+                     config.kill_rate, config.spawn_chance);
 
             sim.set_configuration(&config);
         }
@@ -156,14 +131,7 @@ void sim_configuration_init()
 
     save_configuration_time = 0;
 
-    xTaskCreatePinnedToCore(
-        sim_configuration_writer,
-        "sim_config_writer",
-        4096,
-        NULL,
-        1,
-        NULL,
-        1);
+    xTaskCreatePinnedToCore(sim_configuration_writer, "sim_config_writer", 4096, NULL, 1, NULL, 1);
 }
 
 void check_encoders(uint64_t now)
@@ -495,22 +463,40 @@ void gif_task(void *)
     }
 }
 
+void dump_memory(const char *title)
+{
+    printf("\n============== %s ============\n", title);
+    printf("Internal: %u (%u)\n", heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+           heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+    printf("DMA:      %u\n", heap_caps_get_free_size(MALLOC_CAP_DMA));
+    printf("PSRAM:    %u\n", heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+    printf("8-bit:    %u\n", heap_caps_get_free_size(MALLOC_CAP_8BIT));
+}
+
 extern "C" void app_main(void)
 {
+    dump_memory("start");
+
     nvs_flash_init();
+    dump_memory("flash");
 
     bt.init(state_supplier);
+    dump_memory("bt");
 
     hub75_driver.init();
+    dump_memory("hub75");
 
     encoders.init();
+    dump_memory("encoders");
 
     display.init();
+    dump_memory("display");
 
     int w = display.width();
     int h = display.height();
 
     sim.init(w, h);
+    dump_memory("sim");
 
     sim_configuration_init();
 
