@@ -4,6 +4,7 @@
 #include "gif/gif_player.h"
 #include "gif/sample/sf.h"
 #include "gif/sample/test.h"
+#include "gif/sample/test2.h"
 #include "matrix/display.h"
 #include "matrix/hub75_driver.h"
 #include "task.h"
@@ -30,7 +31,7 @@ class GIFTask : public Task
     virtual void init()
     {
         gifplayer.init(_display);
-        gifplayer.openData(sf_gif, sf_gif_len);
+        gifplayer.openData(__236_spintriangle_gif, __236_spintriangle_gif_len);
     }
 
     virtual bool run(bool overlay_visible, uint64_t now, TickType_t *sleep_time)

@@ -38,16 +38,22 @@
 #define PANEL_HEIGHT 32
 #define PANEL_COUNT 2
 
-#define CLOCK_DIVIDER (32)
+#define CLOCK_DIVIDER (8)
 
 class Hub75Driver
 {
   public:
     Hub75Driver() {};
 
-    inline int width() { return _width; }
+    inline int width()
+    {
+        return _width;
+    }
 
-    inline int height() { return _height; }
+    inline int height()
+    {
+        return _height;
+    }
 
     bool init()
     {
@@ -105,7 +111,10 @@ class Hub75Driver
         return true;
     }
 
-    void set_frame_buffer(const uint16_t *fb_64x64) { encode_frame(fb_64x64); }
+    void set_frame_buffer(const uint16_t *fb_64x64)
+    {
+        encode_frame(fb_64x64);
+    }
 
     void start()
     {
