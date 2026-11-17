@@ -79,7 +79,7 @@ class Simulation
         _grid = _grid_1;
         _temp_grid = _grid_2;
 
-        // reset();
+        reset();
 
         _spawn_chance = 1250;
         _feed_rate = _presets[8].feed_rate;
@@ -92,10 +92,10 @@ class Simulation
     {
         if (config->magic == SIM_CONFIG_MAGIC)
         {
-            _feed_rate = config->feed_rate;
-            _kill_rate = config->kill_rate;
-            _hue = config->hue % 6;
-            _spawn_chance = config->spawn_chance;
+            //_feed_rate = config->feed_rate;
+            //_kill_rate = config->kill_rate;
+            //_hue = config->hue % 6;
+            //_spawn_chance = config->spawn_chance;
         }
     }
 
@@ -108,36 +108,51 @@ class Simulation
         config->magic = SIM_CONFIG_MAGIC;
     }
 
-    inline int spawn_chance() { return _spawn_chance; }
+    inline int spawn_chance()
+    {
+        return _spawn_chance;
+    }
 
     inline int set_spawn_chance(int spawn_chance)
     {
-        _spawn_chance = spawn_chance;
+        //_spawn_chance = spawn_chance;
 
         return _spawn_chance;
     }
 
     inline float set_feed_rate(float feed_rate)
     {
-        _feed_rate = constrain(feed_rate, 0.0f, 1.0f);
+        //_feed_rate = constrain(feed_rate, 0.0f, 1.0f);
 
         return _feed_rate;
     }
 
     inline float set_kill_rate(float kill_rate)
     {
-        _kill_rate = constrain(kill_rate, 0.0f, 1.0f);
+        //_kill_rate = constrain(kill_rate, 0.0f, 1.0f);
 
         return _kill_rate;
     }
 
-    inline float kill_rate() { return _kill_rate; }
+    inline float kill_rate()
+    {
+        return _kill_rate;
+    }
 
-    inline float feed_rate() { return _feed_rate; }
+    inline float feed_rate()
+    {
+        return _feed_rate;
+    }
 
-    inline void next_hue() { _hue = (_hue + 1) % 6; }
+    inline void next_hue()
+    {
+        _hue = (_hue + 1) % 6;
+    }
 
-    inline void add(int16_t x, int16_t y) { _grid[ap(x, y)].B = 1.0f; }
+    inline void add(int16_t x, int16_t y)
+    {
+        _grid[ap(x, y)].B = 1.0f;
+    }
 
     void reset()
     {
@@ -239,7 +254,10 @@ class Simulation
     float _kill_rate;
     int16_t _spawn_chance;
 
-    float interp(float from, float to, float val) { return (from + ((to - from) * val)); }
+    float interp(float from, float to, float val)
+    {
+        return (from + ((to - from) * val));
+    }
 
     const band_t _bands[5] = {
         {.r = 0.0f, .g = 0.0f, .b = 0.0f, .s = 0.00f},  {.r = 4.0f, .g = 1.0f, .b = 9.0f, .s = 0.40f},
@@ -300,13 +318,25 @@ class Simulation
         }
     }
 
-    inline void spawn() { _grid[random() % (_width * _height)].B = 1.0f; }
+    inline void spawn()
+    {
+        _grid[random() % (_width * _height)].B = 1.0f;
+    }
 
-    inline int ap1(int x, int y) { return (y * _width) + x; }
+    inline int ap1(int x, int y)
+    {
+        return (y * _width) + x;
+    }
 
-    inline int emod(int a, int b) { return (a % b + b) % b; }
+    inline int emod(int a, int b)
+    {
+        return (a % b + b) % b;
+    }
 
-    float constrain(float value, float low, float high) { return value > high ? high : (value < low ? low : value); }
+    float constrain(float value, float low, float high)
+    {
+        return value > high ? high : (value < low ? low : value);
+    }
 
     float laplacian_func(int x, int y, bool type)
     {

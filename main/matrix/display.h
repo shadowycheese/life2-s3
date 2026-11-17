@@ -39,13 +39,25 @@ class Display : public Adafruit_GFX
         clear_screen();
     }
 
-    inline int width() { return _driver->width(); }
+    inline int width()
+    {
+        return _width;
+    }
 
-    inline int height() { return _driver->height(); }
+    inline int height()
+    {
+        return _height;
+    }
 
-    void drawPixel(int16_t x, int16_t y, uint16_t col) { draw_pixel(x, y, col); }
+    void drawPixel(int16_t x, int16_t y, uint16_t col)
+    {
+        draw_pixel(x, y, col);
+    }
 
-    uint16_t get_pixel(int16_t x, int16_t y) { return _frame_buffer[(y * PANEL_WIDTH) + x]; }
+    uint16_t get_pixel(int16_t x, int16_t y)
+    {
+        return _frame_buffer[(y * PANEL_WIDTH) + x];
+    }
 
     void draw_pixel(int16_t x, int16_t y, uint16_t col)
     {
@@ -65,9 +77,15 @@ class Display : public Adafruit_GFX
         _frame_buffer[(y * PANEL_WIDTH) + x] = col;
     }
 
-    void commit_frame() { _driver->set_frame_buffer(&_frame_buffer[0]); }
+    void commit_frame()
+    {
+        _driver->set_frame_buffer(&_frame_buffer[0]);
+    }
 
-    void clear_screen() { memset(&_frame_buffer[0], 0, 2 * _width * _height); }
+    void clear_screen()
+    {
+        memset(&_frame_buffer[0], 0, 2 * _width * _height);
+    }
 
   private:
     uint16_t *_frame_buffer;
