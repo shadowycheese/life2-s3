@@ -3,12 +3,12 @@
 #include "io/bluetooth.h"
 #include "io/encoder.h"
 #include "io/espio.h"
+#include "mandlebrot/mand_task.h"
 #include "matrix/display.h"
 #include "matrix/hub75_driver.h"
 #include "nvs.h"
 #include "nvs_flash.h"
 #include "simulation/sim_task.h"
-#include "simulation/simulation.h"
 #include <esp_log.h>
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
@@ -18,6 +18,7 @@ Hub75Driver hub75_driver;
 Display display(&hub75_driver);
 SimTask sim_task(&display);
 GIFTask gif_task(&display);
+MandlebrotTask mand_task(&display);
 Bluetooth bt;
 uint64_t overlay_expiry;
 bool preset_changed;
@@ -244,8 +245,9 @@ extern "C" void app_main(void)
 
     gif_task.init();
     sim_task.init();
+    mand_task.init();
 
-    current_task = &gif_task;
+    current_task = &mand_task;
 
     configuration_init();
 
