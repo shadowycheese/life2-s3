@@ -1,11 +1,11 @@
 #ifndef MANDLEBROT_H
 #define MANDLEBROT_H
 
-#include "nvs.h"
-#include "nvs_flash.h"
+#include <esp_heap_caps.h>
 #include <esp_log.h>
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
+#include <stdint.h>
 #include <stdio.h>
 
 #define MAX_LOOPS (64)
@@ -39,22 +39,22 @@ class Mandlebrot
 
         int array_size = _w * _h;
 
-        size_t grid_bytes = sizeof(uint8_t) * array_size;
+        size_t grid_bytes = sizeof(uint16_t) * array_size;
 
-        _grid = (uint8_t *)(void *)heap_caps_aligned_alloc(4, grid_bytes, MALLOC_CAP_INTERNAL);
+        _grid = (uint16_t *)(void *)heap_caps_aligned_alloc(4, grid_bytes, MALLOC_CAP_INTERNAL);
     }
 
-    uint8_t iterations(int x, int y)
+    uint16_t iterations(int x, int y)
     {
-        return _grid[(y * _h) + x];
+        return _grid[(y * _w) + x];
     }
 
-    uint8_t calc(float r, float i, int max_loops)
+    uint16_t calc(float r, float i, int max_loops)
     {
         float zr = 0.0f;
         float zi = 0.0f;
 
-        uint8_t loop = 0;
+        uint16_t loop = 0;
 
         while (((zr * zr + zi * zi) <= 4.0f) && (loop < max_loops))
         {
@@ -78,7 +78,8 @@ class Mandlebrot
 
     void step()
     {
-        float step = _path[_step].scale / (float)_w;
+        float step_x = _path[_step].scale / (float)_w;
+        float step_y = _path[_step].scale / (float)_h;
         float r = _path[_step].real;
         float i = _path[_step].imag;
 
@@ -86,12 +87,12 @@ class Mandlebrot
         {
             for (int x = 0; x < _w; x++)
             {
-                _grid[(y * _h) + x] = calc(r, i, _path[_step].max_iter);
+                _grid[(y * _w) + x] = calc(r, i, _path[_step].max_iter);
 
-                r += step;
+                r += step_x;
             }
 
-            i += step;
+            i += step_y;
             r = _path[_step].real;
         }
 
@@ -106,7 +107,7 @@ class Mandlebrot
     float _x;
     float _y;
     float _size;
-    uint8_t *_grid;
+    uint16_t *_grid;
 
     const zoom_frame_t _path[ZOOM_PATH_LEN] = {
         // --- Segment 0: Start -> Seahorse Valley Entry (Frames 0-35) ---

@@ -2,9 +2,6 @@
 #define SIM_TASK_H
 
 #include "matrix/display.h"
-#include "matrix/hub75_driver.h"
-#include "nvs.h"
-#include "nvs_flash.h"
 #include "simulation/simulation.h"
 #include "task.h"
 #include <esp_log.h>
@@ -129,7 +126,7 @@ class SimTask : public Task
   private:
     static constexpr const char *APP_TAG = "SIMT";
 
-    const TickType_t _delay_period = pdMS_TO_TICKS(10 * 7);
+    const TickType_t _delay_period = pdMS_TO_TICKS(10 * 5);
 
     int _w, _h;
 

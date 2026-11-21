@@ -48,14 +48,6 @@ typedef struct
     uint8_t r, g, b;
 } rgb_t;
 
-typedef struct
-{
-    float r;
-    float g;
-    float b;
-    float s;
-} band_t;
-
 #define ap(x, y) (((y) * _width) + (x))
 
 class Simulation
@@ -254,70 +246,60 @@ class Simulation
     float _kill_rate;
     int16_t _spawn_chance;
 
-    float interp(float from, float to, float val)
+    __attribute__((always_inline)) inline uint16_t pack_band_colour(float f, float r0, float g0, float b0,
+                                                                    float r1, float g1, float b1)
     {
-        return (from + ((to - from) * val));
-    }
-
-    const band_t _bands[5] = {
-        {.r = 0.0f, .g = 0.0f, .b = 0.0f, .s = 0.00f},
-        {.r = 4.0f, .g = 1.0f, .b = 9.0f, .s = 0.40f},
-        {.r = 9.0f, .g = 0.0f, .b = 13.0f, .s = 0.60f},
-        {.r = 11.0f, .g = 3.0f, .b = 2.0f, .s = 0.80f},
-        {.r = 9.0f, .g = 8.0f, .b = 1.0f, .s = 1.00f},
-    };
-    const float r0 = 0.0f, g0 = 0.0f, b0 = 0.0f;
-    // Stage 1: purple/magenta
-    const float r1 = 6.0f, g1 = 1.0f, b1 = 8.0f;
-    // Stage 2: coral/orange
-    const float r2 = 11.0f, g2 = 3.0f, b2 = 2.0f;
-    // Stage 3: warm highlight / yellow
-    const float r3 = 13.0f, g3 = 12.0f, b3 = 1.0f;
-
-    const int _band_count = sizeof(_bands) / sizeof(band_t);
-
-    uint16_t map_grayscott_rgb444(float val)
-    {
-        float r = 0.0f;
-        float g = 0.0f;
-        float b = 0.0f;
-
-        for (int i = 1; i < _band_count; i++)
-        {
-            if (val <= _bands[i].s)
-            {
-                float band_size = _bands[i].s - _bands[i - 1].s;
-                float f = (val - _bands[i - 1].s) * (1.0f / band_size);
-
-                r = interp(_bands[i - 1].r, _bands[i].r, f);
-                g = interp(_bands[i - 1].g, _bands[i].g, f);
-                b = interp(_bands[i - 1].b, _bands[i].b, f);
-
-                break;
-            }
-        }
-
-        uint16_t r_int = (uint16_t)(r + 0.5f);
-        uint16_t g_int = (uint16_t)(g + 0.5f);
-        uint16_t b_int = (uint16_t)(b + 0.5f);
+        const uint16_t r = (uint16_t)((r0 + (r1 - r0) * f) + 0.5f);
+        const uint16_t g = (uint16_t)((g0 + (g1 - g0) * f) + 0.5f);
+        const uint16_t b = (uint16_t)((b0 + (b1 - b0) * f) + 0.5f);
 
         switch (_hue)
         {
         case 0:
-            return RGB(r_int, g_int, b_int);
+            return RGB(r, g, b);
         case 1:
-            return RGB(r_int, b_int, g_int);
+            return RGB(r, b, g);
         case 2:
-            return RGB(g_int, r_int, b_int);
+            return RGB(g, r, b);
         case 3:
-            return RGB(g_int, b_int, r_int);
+            return RGB(g, b, r);
         case 4:
-            return RGB(b_int, r_int, g_int);
+            return RGB(b, r, g);
         case 5:
-            return RGB(b_int, g_int, r_int);
+            return RGB(b, g, r);
         default:
-            return RGB(r_int, g_int, b_int);
+            return RGB(r, g, b);
         }
+    }
+
+    uint16_t map_grayscott_rgb444(float val)
+    {
+        // Out-of-range and NaN values produced black in the original loop as well.
+        if (!(val <= 1.0f))
+        {
+            return 0;
+        }
+
+        // Four fixed bands: no loop, no runtime band lookup, and the inverse
+        // widths are folded into constants at compile time.
+        if (val <= 0.40f)
+        {
+            return pack_band_colour(val * (1.0f / (0.40f - 0.00f)),
+                                    0.0f, 0.0f, 0.0f, 4.0f, 1.0f, 9.0f);
+        }
+        if (val <= 0.60f)
+        {
+            return pack_band_colour((val - 0.40f) * (1.0f / (0.60f - 0.40f)),
+                                    4.0f, 1.0f, 9.0f, 9.0f, 0.0f, 13.0f);
+        }
+        if (val <= 0.80f)
+        {
+            return pack_band_colour((val - 0.60f) * (1.0f / (0.80f - 0.60f)),
+                                    9.0f, 0.0f, 13.0f, 11.0f, 3.0f, 2.0f);
+        }
+
+        return pack_band_colour((val - 0.80f) * (1.0f / (1.00f - 0.80f)),
+                                11.0f, 3.0f, 2.0f, 9.0f, 8.0f, 1.0f);
     }
 
     inline void spawn()
@@ -325,54 +307,66 @@ class Simulation
         _grid[random() % (_width * _height)].B = 1.0f;
     }
 
-    inline int ap1(int x, int y)
-    {
-        return (y * _width) + x;
-    }
-
-    inline int emod(int a, int b)
-    {
-        return (a % b + b) % b;
-    }
-
-    float constrain(float value, float low, float high)
+    inline float constrain(float value, float low, float high)
     {
         return value > high ? high : (value < low ? low : value);
     }
 
-    float laplacian_func(int x, int y, bool type)
+    inline float clamp01(float value)
     {
-        int left = emod(x - 1, _width);
-        int right = emod(x + 1, _width);
-        int up = emod(y - 1, _height);
-        int down = emod(y + 1, _height);
-
-        return (
-            type ? (0.2 * (_grid[ap(right, y)].A + _grid[ap(left, y)].A + _grid[ap(x, down)].A + _grid[ap(x, up)].A) +
-                    0.05 * (_grid[ap(left, up)].A + _grid[ap(right, up)].A + _grid[ap(left, down)].A + _grid[ap(right, down)].A) -
-                    _grid[ap(x, y)].A)
-                 : (0.2 * (_grid[ap(right, y)].B + _grid[ap(left, y)].B + _grid[ap(x, down)].B + _grid[ap(x, up)].B) +
-                    0.05 * (_grid[ap(left, up)].B + _grid[ap(right, up)].B + _grid[ap(left, down)].B + _grid[ap(right, down)].B) -
-                    _grid[ap(x, y)].B));
+        return value > 1.0f ? 1.0f : (value < 0.0f ? 0.0f : value);
     }
 
     void step_simulation()
     {
-        for (int x = 0; x < _width; x++)
-        {
-            for (int y = 0; y < _height; y++)
-            {
-                int p = ap(x, y);
+        cell_t *__restrict src = _grid;
+        cell_t *__restrict dst = _temp_grid;
 
-                _temp_grid[p].A = constrain(_grid[p].A + (_D_A * laplacian_func(x, y, true) -
-                                                          _grid[p].A * _grid[p].B * _grid[p].B + _feed_rate * (1 - _grid[p].A)),
-                                            0,
-                                            1);
-                _temp_grid[p].B =
-                    constrain(_grid[p].B + (_D_B * laplacian_func(x, y, false) + _grid[p].A * _grid[p].B * _grid[p].B -
-                                            (_kill_rate + _feed_rate) * _grid[p].B),
-                              0,
-                              1);
+        const float d_a = _D_A;
+        const float d_b = _D_B;
+        const float feed = _feed_rate;
+        const float react_kill = _kill_rate + _feed_rate;
+
+        const int width = _width;
+        const int height = _height;
+
+        // Row-major traversal: consecutive cells (and the three active rows) stay in cache.
+        for (int y = 0; y < height; y++)
+        {
+            const int row = y * width;
+            const int up_row = (y == 0 ? height - 1 : y - 1) * width;
+            const int down_row = (y == height - 1 ? 0 : y + 1) * width;
+
+            for (int x = 0; x < width; x++)
+            {
+                const int left = x == 0 ? width - 1 : x - 1;
+                const int right = x == width - 1 ? 0 : x + 1;
+
+                // Both chemicals are computed from the same nine neighbour reads.
+                const cell_t &c = src[row + x];
+                const cell_t &cell_right = src[row + right];
+                const cell_t &cell_left = src[row + left];
+                const cell_t &cell_down = src[down_row + x];
+                const cell_t &cell_up = src[up_row + x];
+                const cell_t &cell_left_up = src[up_row + left];
+                const cell_t &cell_right_up = src[up_row + right];
+                const cell_t &cell_left_down = src[down_row + left];
+                const cell_t &cell_right_down = src[down_row + right];
+
+                const float lap_a =
+                    0.2f * (cell_right.A + cell_left.A + cell_down.A + cell_up.A) +
+                    0.05f * (cell_left_up.A + cell_right_up.A + cell_left_down.A + cell_right_down.A) -
+                    c.A;
+                const float lap_b =
+                    0.2f * (cell_right.B + cell_left.B + cell_down.B + cell_up.B) +
+                    0.05f * (cell_left_up.B + cell_right_up.B + cell_left_down.B + cell_right_down.B) -
+                    c.B;
+
+                const float abb = c.A * c.B * c.B;
+
+                cell_t &out = dst[row + x];
+                out.A = clamp01(c.A + (d_a * lap_a - abb + feed * (1.0f - c.A)));
+                out.B = clamp01(c.B + (d_b * lap_b + abb - react_kill * c.B));
             }
         }
 
@@ -386,14 +380,6 @@ class Simulation
             _grid = _grid_1;
             _temp_grid = _grid_2;
         }
-
-        /*        int as = _width * _height;
-
-                for (int i = 0; i < as; i++)
-                {
-                    _grid[i].A = _temp_grid[i].A;
-                    _grid[i].B = _temp_grid[i].B;
-                }*/
     }
 };
 #endif
