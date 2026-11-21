@@ -49,21 +49,44 @@ class Mandlebrot
         return _grid[(y * _w) + x];
     }
 
-    uint16_t calc(float r, float i, int max_loops)
+    __attribute__((always_inline)) inline uint16_t calc(float r, float i, int max_loops)
     {
+        // The main cardioid and the period-2 bulb are wholly inside the set;
+        // skipping their iterations avoids most of the work for interior pixels.
+        const float x0 = r - 0.25f;
+        const float x02 = x0 * x0;
+        const float i2 = i * i;
+        const float q = x02 + i2;
+
+        if ((q * (q + x0)) <= (0.25f * i2))
+        {
+            return 0;
+        }
+
+        const float xp = r + 1.0f;
+        if ((xp * xp + i2) <= 0.0625f)
+        {
+            return 0;
+        }
+
         float zr = 0.0f;
         float zi = 0.0f;
+        float zr2 = 0.0f;
+        float zi2 = 0.0f;
 
-        uint16_t loop = 0;
+        // Keep zr^2 and zi^2 between iterations: the escape test and the next
+        // z = z^2 + c both need them, so each is computed once instead of twice.
+        int loop = 0;
 
-        while (((zr * zr + zi * zi) <= 4.0f) && (loop < max_loops))
+        while (((zr2 + zi2) <= 4.0f) && (loop < max_loops))
         {
-            // z = z^2 + c
-            float nr = (zr * zr) - (zi * zi) + r;
             float ni = (2.0f * zr * zi) + i;
 
-            zr = nr;
+            zr = zr2 - zi2 + r;
             zi = ni;
+
+            zr2 = zr * zr;
+            zi2 = zi * zi;
 
             loop++;
         }
@@ -73,30 +96,40 @@ class Mandlebrot
             return 0;
         }
 
-        return loop;
+        return (uint16_t)loop;
     }
 
     void step()
     {
-        float step_x = _path[_step].scale / (float)_w;
-        float step_y = _path[_step].scale / (float)_h;
-        float r = _path[_step].real;
-        float i = _path[_step].imag;
+        const zoom_frame_t &frame = _path[_step];
 
-        for (int y = 0; y < _h; y++)
+        const int width = _w;
+        const int height = _h;
+        const int max_iter = frame.max_iter;
+        const float step_x = frame.scale / (float)width;
+        const float step_y = frame.scale / (float)height;
+        const float real_start = frame.real;
+
+        uint16_t *__restrict out = _grid;
+        float i = frame.imag;
+
+        for (int y = 0; y < height; y++)
         {
-            for (int x = 0; x < _w; x++)
-            {
-                _grid[(y * _w) + x] = calc(r, i, _path[_step].max_iter);
+            float r = real_start;
 
+            for (int x = 0; x < width; x++)
+            {
+                *out++ = calc(r, i, max_iter);
                 r += step_x;
             }
 
             i += step_y;
-            r = _path[_step].real;
         }
 
-        _step = (_step + 1) % ZOOM_PATH_LEN;
+        if (++_step == ZOOM_PATH_LEN)
+        {
+            _step = 0;
+        }
     }
 
   private:
