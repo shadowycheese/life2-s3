@@ -1,6 +1,12 @@
 #include "esp_log.h"
-#include "gif/animated_gif.h"
+#include "gif/lib/AnimatedGIF.h"
 #include "matrix/display.h"
+#include <sys/stat.h>
+
+void *gif_open(const char *filename, int32_t *size);
+void gif_close(void *handle);
+int32_t gif_read(GIFFILE *handle, uint8_t *buffer, int32_t length);
+int32_t gif_seek(GIFFILE *handle, int32_t iPosition);
 
 class GIFPlayer
 {
@@ -8,16 +14,16 @@ class GIFPlayer
     void init(Display *display)
     {
         _display = display;
-        _turbo_buffer = (uint8_t *)heap_caps_aligned_alloc(16, TURBO_BUFFER_SIZE + (64 * 64), MALLOC_CAP_SPIRAM);
-        _buffer = (uint8_t *)heap_caps_aligned_alloc(16, 4 * (64 * 64), MALLOC_CAP_SPIRAM);
+        _turbo_buffer = (uint8_t *)heap_caps_aligned_alloc(16, 10 * TURBO_BUFFER_SIZE + (64 * 64), MALLOC_CAP_SPIRAM);
+        _buffer = (uint8_t *)heap_caps_aligned_alloc(16, 10 * (64 * 64), MALLOC_CAP_SPIRAM);
         ESP_LOGI(TAG, "Frame buf: %08X", _buffer);
     }
 
-    int openData(const void *gif_data, int gif_size)
+    int open_file(FILE *handle, int32_t size)
     {
         _gif.begin(GIF_PALETTE_RGB565_BE);
 
-        if (_gif.open((uint8_t *)gif_data, gif_size, NULL))
+        if (_gif.open(handle, size, gif_read, gif_seek, NULL))
         {
             ESP_LOGI(TAG, "Opened gif file (%dx%d)", _gif.getCanvasWidth(), _gif.getCanvasHeight());
 
@@ -45,7 +51,7 @@ class GIFPlayer
         int h = _gif.getFrameHeight();
         int xo = _gif.getFrameXOff();
         int yo = _gif.getFrameYOff();
-        int rc = _gif.playFrame(&delay);
+        int rc = _gif.playFrame(false, &delay, NULL);
 
         if (!rc)
         {

@@ -1,23 +1,79 @@
-#ifndef ANIMATEDGIF_H
-#define ANIMATEDGIF_H
+// Copyright 2020 BitBank Software, Inc. All Rights Reserved.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//    http://www.apache.org/licenses/LICENSE-2.0
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//===========================================================================
 
+#ifndef __ANIMATEDGIF__
+#define __ANIMATEDGIF__
+#if defined(ARDUINO)
+#include <Arduino.h>
+#else
 #include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
-
 #define memcpy_P memcpy
 #define PROGMEM
+#endif
+
+// Cortex-M4/M7 allow unaligned access to SRAM
+#if defined(HAL_ESP32_HAL_H_) || defined(TEENSYDUINO) || defined(ARM_MATH_CM4) || defined(ARM_MATH_CM7)
+#define ALLOWS_UNALIGNED
+#endif
+
+//
+// GIF Animator
+// Written by Larry Bank
+// Copyright (c) 2020 BitBank Software, Inc.
+// bitbank@pobox.com
+//
+// Designed to decode images up to 480x320 on MCUs
+// using less than 22K of RAM
+// ...and decode any sized image when more RAM is available
+//
+// ** NEW **
+// Turbo mode added Feb 18, 2024. This option decodes images
+// up to 30x faster if there is enough RAM (48K + full framebuffer)
+//
 
 /* GIF Defines and variables */
 #define MAX_CHUNK_SIZE 255
-
+//
+// These 2 macros can be changed to limit the amount of RAM
+// required by the decoder. For example, decoding 1-bit images to
+// a 128x32 display will not need a max code size of 12 nor a palette
+// with 256 entries
+//
 #define TURBO_BUFFER_SIZE 0x6100
 
+// If you intend to decode generic GIFs, you want this value to be 12. If you are using GIFs solely for animations in
+// your own project, and you control the GIFs you intend to play, then you can save additional RAM here:
+// the decoder must reserve a minimum of 4 byte * (1<<MAX_CODE_SIZE) for the dictionary, but based on implementation
+// actually reserves 5 byte * (1<<MAX_CODE_SIZE). Small or low colour GIFs may inherently not require a large
+// dictionary. For larger GIFs, the en(!)coder can "voluntarily" choose not to utilize the entire dictionary. I.e.,
+// by preparing (specially encoding) the GIFs, you can save >10kB RAM, but you will not be able to decode arbitrary
+// images anymore. One application to craft such GIFs can be found here (use option -d)
+// https://create.stephan-brumme.com/flexigif-lossless-gif-lzw-optimization/
 #define MAX_CODE_SIZE 12
 
 #define MAX_COLORS 256
+#ifdef __LINUX__
+#define MAX_WIDTH 2048
+#else
 #define MAX_WIDTH 480
+#endif // __LINUX__
 #define LZW_BUF_SIZE (6 * MAX_CHUNK_SIZE)
 #define LZW_HIGHWATER (4 * MAX_CHUNK_SIZE)
+// This buffer is used to store the pixel sequence in reverse order
+// it needs to be large enough to hold the longest possible
+// sequence (1<<MAX_CODE_SIZE)
 #define FILE_BUF_SIZE (1 << MAX_CODE_SIZE)
 
 #define PIXEL_FIRST 0
@@ -25,9 +81,13 @@
 #define LINK_UNUSED 5911 // 0x1717 to use memset
 #define LINK_END 5912
 #define MAX_HASH 5003
+// expanded LZW buffer for Turbo mode
 #define LZW_BUF_SIZE_TURBO (LZW_BUF_SIZE + (2 << MAX_CODE_SIZE) + (PIXEL_LAST * 2) + MAX_WIDTH)
 #define LZW_HIGHWATER_TURBO ((LZW_BUF_SIZE_TURBO * 14) / 16)
 
+//
+// Pixel types
+//
 enum
 {
     GIF_PALETTE_RGB565_LE = 0, // little endian (default)
@@ -37,7 +97,21 @@ enum
     GIF_PALETTE_1BPP,          // 1-bit per pixel (horizontal, MSB on left)
     GIF_PALETTE_1BPP_OLED      // 1-bit per pixel (vertical, LSB on top)
 };
-
+// for compatibility with older code
+#define LITTLE_ENDIAN_PIXELS GIF_PALETTE_RGB565_LE
+#define BIG_ENDIAN_PIXELS GIF_PALETTE_RGB565_BE
+//
+// Draw types
+//
+// RAW = 8-bit palettized pixels requiring transparent pixel handling and conversion through the palette.
+//       Each line is sent to the GIFDraw callback as 8-bit pixels. If a framebuffer exists, the lines will be
+//       written there too. The GIFDraw callback is optional if there is a framebuffer allocated.
+//
+// COOKED = 16/24/32-bpp fully rendered pixels ready for display. This requires a full frame buffer with extra
+//          room for the fully rendered pixels at the end of the 8-bit pixel buffer. For example, a 160x120
+//          canvas size with 24-bit output would require (160*120 + 3*160) bytes.
+//          Each prepared line is sent to the GIFDraw callback as a row of 16/24/32-bit pixels.
+//
 enum
 {
     GIF_DRAW_RAW = 0,
@@ -125,6 +199,8 @@ typedef struct gif_image_tag
     GIF_READ_CALLBACK *pfnRead;
     GIF_SEEK_CALLBACK *pfnSeek;
     GIF_DRAW_CALLBACK *pfnDraw;
+    GIF_OPEN_CALLBACK *pfnOpen;
+    GIF_CLOSE_CALLBACK *pfnClose;
     GIFFILE GIFFile;
     void *pUser;
     unsigned char *pFrameBuffer;
@@ -151,13 +227,21 @@ class AnimatedGIF
   public:
     int open(uint8_t *pData, int iDataSize, GIF_DRAW_CALLBACK *pfnDraw);
     int openFLASH(uint8_t *pData, int iDataSize, GIF_DRAW_CALLBACK *pfnDraw);
-    int open(const char *szFilename, GIF_OPEN_CALLBACK *pfnOpen, GIF_CLOSE_CALLBACK *pfnClose, GIF_READ_CALLBACK *pfnRead,
-             GIF_SEEK_CALLBACK *pfnSeek, GIF_DRAW_CALLBACK *pfnDraw);
+    int open(const char *szFilename,
+             GIF_OPEN_CALLBACK *pfnOpen,
+             GIF_CLOSE_CALLBACK *pfnClose,
+             GIF_READ_CALLBACK *pfnRead,
+             GIF_SEEK_CALLBACK *pfnSeek,
+             GIF_DRAW_CALLBACK *pfnDraw);
+    int open(void *handle, int32_t size, GIF_READ_CALLBACK *pfnRead, GIF_SEEK_CALLBACK *pfnSeek, GIF_DRAW_CALLBACK *pfnDraw);
     void close();
     void reset();
     void begin(uint8_t ucPaletteType = GIF_PALETTE_RGB565_LE);
-    void begin(int iEndian, uint8_t ucPaletteType) { begin(ucPaletteType); };
-    int playFrame(int *);
+    void begin(int iEndian, uint8_t ucPaletteType)
+    {
+        begin(ucPaletteType);
+    };
+    int playFrame(bool bSync, int *delayMilliseconds, void *pUser = NULL);
     int getCanvasWidth();
     int getFrameWidth();
     int getFrameHeight();
@@ -183,13 +267,43 @@ class AnimatedGIF
   private:
     GIFIMAGE _gif;
 };
+#else
+// C interface
+int GIF_openRAM(GIFIMAGE *pGIF, uint8_t *pData, int iDataSize, GIF_DRAW_CALLBACK *pfnDraw);
+int GIF_openFile(GIFIMAGE *pGIF, const char *szFilename, GIF_DRAW_CALLBACK *pfnDraw);
+void GIF_close(GIFIMAGE *pGIF);
+void GIF_begin(GIFIMAGE *pGIF, unsigned char ucPaletteType);
+void GIF_reset(GIFIMAGE *pGIF);
+int GIF_playFrame(GIFIMAGE *pGIF, int *delayMilliseconds, void *pUser);
+int GIF_getCanvasWidth(GIFIMAGE *pGIF);
+int GIF_getCanvasHeight(GIFIMAGE *pGIF);
+int GIF_getComment(GIFIMAGE *pGIF, char *destBuffer);
+int GIF_getInfo(GIFIMAGE *pGIF, GIFINFO *pInfo);
+int GIF_getLastError(GIFIMAGE *pGIF);
+int GIF_getLoopCount(GIFIMAGE *pGIF);
+void GIF_mergeTransparent(uint8_t *pSrc, uint8_t *pDst, uint8_t ucTrans, int iLen);
+void GIF_cookPixels(uint8_t *pSrc, uint8_t *pDst, int iTrans, int iLen, uint32_t *pPalette, uint16_t *pRGB565);
+#endif // __cplusplus
 
-// Due to unaligned memory causing an exception, we have to do these macros the slow way
+#if (INTPTR_MAX == INT64_MAX)
+#define ALLOWS_UNALIGNED
+#define INTELSHORT(p) (*(uint16_t *)p)
+#define INTELLONG(p) (*(uint64_t *)p)
+#define REGISTER_WIDTH 64
+#define BIGINT int64_t
+#define BIGUINT uint64_t
+#else
 #define REGISTER_WIDTH 32
+#ifdef ALLOWS_UNALIGNED
+#define INTELSHORT(p) (*(uint16_t *)p)
+#define INTELLONG(p) (*(uint32_t *)p)
+#else
+// Due to unaligned memory causing an exception, we have to do these macros the slow way
 #define INTELSHORT(p) ((*p) + (*(p + 1) << 8))
 #define INTELLONG(p) ((*p) + (*(p + 1) << 8) + (*(p + 2) << 16) + (*(p + 3) << 24))
+#endif // ALLOWS_UNALIGNED
 #define BIGINT int32_t
 #define BIGUINT uint32_t
+#endif // 64 vs 32-bit native register size
 
-#endif
-#endif
+#endif // __ANIMATEDGIF__

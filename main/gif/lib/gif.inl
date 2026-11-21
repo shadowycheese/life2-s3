@@ -1,4 +1,33 @@
-#include "gif/animated_gif.h"
+//
+// GIF Animator
+// written by Larry Bank
+// bitbank@pobox.com
+// Arduino port started 7/5/2020
+// Original GIF code written 20+ years ago :)
+// The goal of this code is to decode images up to 480x320
+// using no more than 22K of RAM (if sent directly to an LCD display)
+//
+// Copyright 2020 BitBank Software, Inc. All Rights Reserved.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//    http://www.apache.org/licenses/LICENSE-2.0
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//===========================================================================
+#include "AnimatedGIF.h"
+
+#if defined(HAL_ESP32_HAL_H_)
+#define memcpy_P memcpy
+#pragma GCC optimize("O2")
+#endif
+#if (__ARM_ARCH >= 7) || defined(__arm64__) || defined(__aarch64__)
+#include <arm_neon.h>
+#define HAS_NEON
+#endif
 
 static const unsigned char cGIFBits[9] = {1, 4, 4, 4, 8, 8, 8, 8, 8}; // convert odd bpp values to ones we can handle
 typedef void(GIF_MAKE_PELS)(GIFIMAGE *pFile, unsigned int code);
@@ -8,11 +37,55 @@ static int GIFParseInfo(GIFIMAGE *pPage, int bInfoOnly);
 static int GIFGetMoreData(GIFIMAGE *pPage);
 static void GIFMakePels(GIFIMAGE *pPage, unsigned int code);
 
+static void GIFMakeRGB565Pels(GIFIMAGE *pPage, unsigned int code);
 static int DecodeLZW(GIFIMAGE *pImage, int iOptions);
 static int DecodeLZWTurbo(GIFIMAGE *pImage, int iOptions);
 static int32_t readMem(GIFFILE *pFile, uint8_t *pBuf, int32_t iLen);
 static int32_t seekMem(GIFFILE *pFile, int32_t iPosition);
 int GIF_getInfo(GIFIMAGE *pPage, GIFINFO *pInfo);
+#if defined(PICO_BUILD) || defined(__LINUX__) || defined(__MCUXPRESSO)
+static int32_t readFile(GIFFILE *pFile, uint8_t *pBuf, int32_t iLen);
+static int32_t seekFile(GIFFILE *pFile, int32_t iPosition);
+static void closeFile(void *handle);
+
+// C API
+int GIF_openRAM(GIFIMAGE *pGIF, uint8_t *pData, int iDataSize, GIF_DRAW_CALLBACK *pfnDraw)
+{
+    pGIF->iError = GIF_SUCCESS;
+    pGIF->pfnRead = readMem;
+    pGIF->pfnSeek = seekMem;
+    pGIF->pfnDraw = pfnDraw;
+    pGIF->pfnOpen = NULL;
+    pGIF->pfnClose = NULL;
+    pGIF->GIFFile.iSize = iDataSize;
+    pGIF->GIFFile.pData = pData;
+    return GIFInit(pGIF);
+} /* GIF_openRAM() */
+
+#ifdef __LINUX__
+int GIF_openFile(GIFIMAGE *pGIF, const char *szFilename, GIF_DRAW_CALLBACK *pfnDraw)
+{
+    pGIF->iError = GIF_SUCCESS;
+    pGIF->pfnRead = readFile;
+    pGIF->pfnSeek = seekFile;
+    pGIF->pfnDraw = pfnDraw;
+    pGIF->pfnOpen = NULL;
+    pGIF->pfnClose = closeFile;
+    pGIF->GIFFile.fHandle = fopen(szFilename, "r+b");
+    if (pGIF->GIFFile.fHandle == NULL)
+        return 0;
+    fseek((FILE *)pGIF->GIFFile.fHandle, 0, SEEK_END);
+    pGIF->GIFFile.iSize = (int)ftell((FILE *)pGIF->GIFFile.fHandle);
+    fseek((FILE *)pGIF->GIFFile.fHandle, 0, SEEK_SET);
+    return GIFInit(pGIF);
+} /* GIF_openFile() */
+#endif
+
+void GIF_close(GIFIMAGE *pGIF)
+{
+    if (pGIF->pfnClose)
+        (*pGIF->pfnClose)(pGIF->GIFFile.fHandle);
+} /* GIF_close() */
 
 void GIF_begin(GIFIMAGE *pGIF, unsigned char ucPaletteType)
 {
@@ -99,9 +172,9 @@ int GIF_getLastError(GIFIMAGE *pGIF)
     return pGIF->iError;
 } /* GIF_getLastError() */
 
-// #endif // !__cplusplus
+#endif // !__cplusplus
 //
-//  Helper functions for memory based images
+// Helper functions for memory based images
 //
 static int32_t readMem(GIFFILE *pFile, uint8_t *pBuf, int32_t iLen)
 {
@@ -117,6 +190,22 @@ static int32_t readMem(GIFFILE *pFile, uint8_t *pBuf, int32_t iLen)
     return iBytesRead;
 } /* readMem() */
 
+#ifndef __LINUX__
+static int32_t readFLASH(GIFFILE *pFile, uint8_t *pBuf, int32_t iLen)
+{
+    int32_t iBytesRead;
+
+    iBytesRead = iLen;
+    if ((pFile->iSize - pFile->iPos) < iLen)
+        iBytesRead = pFile->iSize - pFile->iPos;
+    if (iBytesRead <= 0)
+        return 0;
+    memcpy_P(pBuf, &pFile->pData[pFile->iPos], iBytesRead);
+    pFile->iPos += iBytesRead;
+    return iBytesRead;
+} /* readFLASH() */
+#endif // __LINUX__
+
 static int32_t seekMem(GIFFILE *pFile, int32_t iPosition)
 {
     if (iPosition < 0)
@@ -127,6 +216,47 @@ static int32_t seekMem(GIFFILE *pFile, int32_t iPosition)
     return iPosition;
 } /* seekMem() */
 
+#if defined(__LINUX__) || defined(__MCUXPRESSO)
+static void closeFile(void *handle)
+{
+    fclose((FILE *)handle);
+} /* closeFile() */
+
+static int32_t seekFile(GIFFILE *pFile, int32_t iPosition)
+{
+    if (iPosition < 0)
+        iPosition = 0;
+    else if (iPosition >= pFile->iSize)
+        iPosition = pFile->iSize - 1;
+    pFile->iPos = iPosition;
+    fseek((FILE *)pFile->fHandle, iPosition, SEEK_SET);
+    return iPosition;
+} /* seekMem() */
+
+static int32_t readFile(GIFFILE *pFile, uint8_t *pBuf, int32_t iLen)
+{
+    int32_t iBytesRead;
+
+    iBytesRead = iLen;
+    if ((pFile->iSize - pFile->iPos) < iLen)
+        iBytesRead = pFile->iSize - pFile->iPos;
+    if (iBytesRead <= 0)
+        return 0;
+    iBytesRead = (int)fread(pBuf, 1, iBytesRead, (FILE *)pFile->fHandle);
+    pFile->iPos += iBytesRead;
+    return iBytesRead;
+} /* readFile() */
+
+#endif // __LINUX__
+//
+// The following functions are written in plain C and have no
+// 3rd party dependencies, not even the C runtime library
+//
+//
+// Initialize a GIF file and callback access from a file on SD or memory
+// returns 1 for success, 0 for failure
+// Fills in the canvas size of the GIFIMAGE structure
+//
 static int GIFInit(GIFIMAGE *pGIF)
 {
     pGIF->GIFFile.iPos = 0;              // start at beginning of file
@@ -244,7 +374,8 @@ static int GIFParseInfo(GIFIMAGE *pPage, int bInfoOnly)
                 {
                     pPage->ucGIFBits = p[iOffset + 1];                       // packed fields
                     pPage->iFrameDelay = (INTELSHORT(&p[iOffset + 2])) * 10; // delay in ms
-                    if (pPage->iFrameDelay <= 1)                             // 0-1 is going to make it run at 60fps; use 100 (10fps) as a reasonable substitute
+                    if (pPage->iFrameDelay <=
+                        1) // 0-1 is going to make it run at 60fps; use 100 (10fps) as a reasonable substitute
                         pPage->iFrameDelay = 100;
                     if (pPage->ucGIFBits & 1)                  // transparent color is used
                         pPage->ucTransparent = p[iOffset + 4]; // transparent color index
@@ -1248,14 +1379,14 @@ static int LZWCopyBytes(unsigned char *buf, int iOffset, uint32_t *pSymbols, uin
 //
 // Macro to extract a variable length code
 //
-#define GET_CODE_TURBO                                          \
-    if (bitnum > (REGISTER_WIDTH - MAX_CODE_SIZE /*codesize*/)) \
-    {                                                           \
-        p += (bitnum >> 3);                                     \
-        bitnum &= 7;                                            \
-        ulBits = INTELLONG(p);                                  \
-    }                                                           \
-    code = ((ulBits >> bitnum) & sMask);                        \
+#define GET_CODE_TURBO                                                                                                           \
+    if (bitnum > (REGISTER_WIDTH - MAX_CODE_SIZE /*codesize*/))                                                                  \
+    {                                                                                                                            \
+        p += (bitnum >> 3);                                                                                                      \
+        bitnum &= 7;                                                                                                             \
+        ulBits = INTELLONG(p);                                                                                                   \
+    }                                                                                                                            \
+    code = ((ulBits >> bitnum) & sMask);                                                                                         \
     bitnum += codesize;
 
 //
@@ -1442,8 +1573,8 @@ init_codetable:
             if (pImage->pfnDraw)
             {
                 DrawCooked(pImage, &gd, &buf[pImage->iCanvasHeight * pImage->iCanvasWidth]); // dest = one line past end of canvas
-                gd.pPixels = &buf[pImage->iCanvasHeight * pImage->iCanvasWidth];             // point to the line we just converted
-                (*pImage->pfnDraw)(&gd);                                                     // callback to handle this line
+                gd.pPixels = &buf[pImage->iCanvasHeight * pImage->iCanvasWidth]; // point to the line we just converted
+                (*pImage->pfnDraw)(&gd);                                         // callback to handle this line
             }
             else if (pImage->pFrameBuffer)
             {
@@ -1613,15 +1744,15 @@ static void GIFMakePels(GIFIMAGE *pPage, unsigned int code)
 //
 // Macro to extract a variable length code
 //
-#define GET_CODE                                                                 \
-    if (bitnum > (REGISTER_WIDTH - codesize))                                    \
-    {                                                                            \
-        pImage->iLZWOff += (bitnum >> 3);                                        \
-        bitnum &= 7;                                                             \
-        ulBits = INTELLONG(&p[pImage->iLZWOff]);                                 \
-    }                                                                            \
-    code = (unsigned short)(ulBits >> bitnum); /* Read a REGISTER_WIDTH chunk */ \
-    code &= sMask;                                                               \
+#define GET_CODE                                                                                                                 \
+    if (bitnum > (REGISTER_WIDTH - codesize))                                                                                    \
+    {                                                                                                                            \
+        pImage->iLZWOff += (bitnum >> 3);                                                                                        \
+        bitnum &= 7;                                                                                                             \
+        ulBits = INTELLONG(&p[pImage->iLZWOff]);                                                                                 \
+    }                                                                                                                            \
+    code = (unsigned short)(ulBits >> bitnum); /* Read a REGISTER_WIDTH chunk */                                                 \
+    code &= sMask;                                                                                                               \
     bitnum += codesize;
 //
 // Decode LZW into an image
@@ -1672,7 +1803,8 @@ static int DecodeLZW(GIFIMAGE *pImage, int iOptions)
                 if (pImage->ucPaletteType == GIF_PALETTE_RGB565_LE || pImage->ucPaletteType == GIF_PALETTE_RGB565_BE)
                 {
                     u16BG = pPal[c];
-                    d16 = (uint16_t *)&pImage->pFrameBuffer[(pImage->iCanvasWidth * pImage->iCanvasHeight) + (y * pImage->iCanvasWidth * 2) + (pImage->iPrevX * 2)];
+                    d16 = (uint16_t *)&pImage->pFrameBuffer[(pImage->iCanvasWidth * pImage->iCanvasHeight) +
+                                                            (y * pImage->iCanvasWidth * 2) + (pImage->iPrevX * 2)];
                     for (i = 0; i < pImage->iPrevW; i++)
                     {
                         d16[i] = u16BG;
@@ -1793,4 +1925,4 @@ void GIF_scaleHalf(uint16_t *pCurrent, uint16_t *pPrev, int iWidth, int bBigEndi
         else
             *d++ = (uint16_t)(gSum + rbSum); // store finished pixel
     } // for x
-}
+} /* GIF_scaleHalf() */
