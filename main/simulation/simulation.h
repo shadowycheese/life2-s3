@@ -115,21 +115,21 @@ class Simulation
 
     inline int set_spawn_chance(int spawn_chance)
     {
-        //_spawn_chance = spawn_chance;
+        _spawn_chance = spawn_chance;
 
         return _spawn_chance;
     }
 
     inline float set_feed_rate(float feed_rate)
     {
-        //_feed_rate = constrain(feed_rate, 0.0f, 1.0f);
+        _feed_rate = constrain(feed_rate, 0.0f, 1.0f);
 
         return _feed_rate;
     }
 
     inline float set_kill_rate(float kill_rate)
     {
-        //_kill_rate = constrain(kill_rate, 0.0f, 1.0f);
+        _kill_rate = constrain(kill_rate, 0.0f, 1.0f);
 
         return _kill_rate;
     }
@@ -260,8 +260,10 @@ class Simulation
     }
 
     const band_t _bands[5] = {
-        {.r = 0.0f, .g = 0.0f, .b = 0.0f, .s = 0.00f},  {.r = 4.0f, .g = 1.0f, .b = 9.0f, .s = 0.40f},
-        {.r = 9.0f, .g = 0.0f, .b = 13.0f, .s = 0.60f}, {.r = 11.0f, .g = 3.0f, .b = 2.0f, .s = 0.80f},
+        {.r = 0.0f, .g = 0.0f, .b = 0.0f, .s = 0.00f},
+        {.r = 4.0f, .g = 1.0f, .b = 9.0f, .s = 0.40f},
+        {.r = 9.0f, .g = 0.0f, .b = 13.0f, .s = 0.60f},
+        {.r = 11.0f, .g = 3.0f, .b = 2.0f, .s = 0.80f},
         {.r = 9.0f, .g = 8.0f, .b = 1.0f, .s = 1.00f},
     };
     const float r0 = 0.0f, g0 = 0.0f, b0 = 0.0f;
@@ -364,11 +366,13 @@ class Simulation
 
                 _temp_grid[p].A = constrain(_grid[p].A + (_D_A * laplacian_func(x, y, true) -
                                                           _grid[p].A * _grid[p].B * _grid[p].B + _feed_rate * (1 - _grid[p].A)),
-                                            0, 1);
+                                            0,
+                                            1);
                 _temp_grid[p].B =
                     constrain(_grid[p].B + (_D_B * laplacian_func(x, y, false) + _grid[p].A * _grid[p].B * _grid[p].B -
                                             (_kill_rate + _feed_rate) * _grid[p].B),
-                              0, 1);
+                              0,
+                              1);
             }
         }
 

@@ -34,6 +34,63 @@ class SimTask : public Task
     virtual void init()
     {
         _simulation.init(_w, _h);
+
+        register_bluetooth_event_handler(COMMAND_STATE,
+                                         [this](bluetooth_event_t *event)
+                                         {
+                                             if (event->op == BLE_GATT_ACCESS_OP_READ_CHR)
+                                             {
+                                                 event->send_size = get_state(event->send_buffer);
+                                             }
+                                         });
+        register_bluetooth_event_handler(COMMAND_FEED_RATE,
+                                         [this](bluetooth_event_t *event)
+                                         {
+                                             _simulation.set_feed_rate(bt_valuef(event, 10000));
+
+                                             save_configuration();
+                                         });
+        register_bluetooth_event_handler(COMMAND_KILL_RATE,
+                                         [this](bluetooth_event_t *event)
+                                         {
+                                             _simulation.set_kill_rate(bt_valuef(event, 10000));
+
+                                             save_configuration();
+                                         });
+        register_bluetooth_event_handler(COMMAND_SPAWN_CHANCE,
+                                         [this](bluetooth_event_t *event)
+                                         {
+                                             _simulation.set_spawn_chance(bt_valuef(event, 100));
+
+                                             save_configuration();
+                                         });
+        register_bluetooth_event_handler(COMMAND_PRESET,
+                                         [this](bluetooth_event_t *event)
+                                         {
+                                             _simulation.set_preset(bt_value(event));
+
+                                             save_configuration();
+                                         });
+        register_bluetooth_event_handler(COMMAND_RESET,
+                                         [this](bluetooth_event_t *event)
+                                         {
+                                             _simulation.reset(); //
+                                         });
+        register_bluetooth_event_handler(COMMAND_ADD,
+                                         [this](bluetooth_event_t *event)
+                                         {
+                                             if (event->recv_size >= 2)
+                                             {
+                                                 _simulation.add(event->recv_buffer[0], event->recv_buffer[1]);
+                                             }
+                                         });
+        register_bluetooth_event_handler(COMMAND_HUE,
+                                         [this](bluetooth_event_t *event)
+                                         {
+                                             _simulation.next_hue();
+
+                                             save_configuration();
+                                         });
     }
 
     virtual bool run(uint64_t now, TickType_t *sleep_time)
@@ -69,40 +126,6 @@ class SimTask : public Task
         return true;
     }
 
-    virtual const char *configuration_name()
-    {
-        return "sim_config";
-    }
-
-    virtual size_t get_configuration_size()
-    {
-        return sizeof(sim_configuration_t);
-    }
-
-    virtual size_t get_configuration(void *buffer)
-    {
-        _simulation.get_configuration((sim_configuration_t *)buffer);
-
-        return sizeof(sim_configuration_t);
-    }
-
-    virtual void set_configuration(void *configuration)
-    {
-        _simulation.set_configuration((sim_configuration_t *)configuration);
-    }
-
-    virtual size_t get_state(void *buffer)
-    {
-        sim_state_t *state = (sim_state_t *)buffer;
-
-        state->feed_rate = _simulation.feed_rate();
-        state->kill_rate = _simulation.kill_rate();
-        state->preset = _simulation.preset();
-        state->spawn_chance = _simulation.spawn_chance();
-
-        return sizeof(sim_state_t);
-    }
-
   private:
     static constexpr const char *APP_TAG = "SIMT";
 
@@ -115,6 +138,52 @@ class SimTask : public Task
     Display *_display;
     bool _preset_changed;
     bool _overlay_visible;
+
+    void save_configuration()
+    {
+        sim_configuration_t config;
+
+        _simulation.get_configuration(&config);
+
+        _configuration.save(&config);
+    }
+
+    float bt_valuef(bluetooth_event_t *event, int16_t scale)
+    {
+        int16_t value = bt_value(event);
+
+        return (float)value / (float)scale;
+    }
+
+    int16_t bt_value(bluetooth_event_t *event)
+    {
+        if (event->recv_size > 0)
+        {
+            int16_t value = event->recv_buffer[0];
+
+            if (event->recv_size > 0)
+            {
+                value *= 256;
+                value += event->recv_buffer[1];
+            }
+
+            return value;
+        }
+
+        return 0;
+    }
+
+    uint16_t get_state(void *buffer)
+    {
+        sim_state_t *state = (sim_state_t *)buffer;
+
+        state->feed_rate = _simulation.feed_rate();
+        state->kill_rate = _simulation.kill_rate();
+        state->preset = _simulation.preset();
+        state->spawn_chance = _simulation.spawn_chance();
+
+        return (uint16_t)sizeof(sim_state_t);
+    }
 
     void draw_overlay()
     {
