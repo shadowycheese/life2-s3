@@ -1,6 +1,7 @@
 #ifndef MAND_TASK_H
 #define MAND_TASK_H
 
+#include "config/config.h"
 #include "mandlebrot/mandlebrot.h"
 #include "matrix/display.h"
 #include "task.h"
@@ -9,10 +10,17 @@
 #include <freertos/FreeRTOS.h>
 #include <stdio.h>
 
+typedef struct
+{
+    float x;
+    float y;
+    float w;
+} mand_configuration_t;
+
 class MandlebrotTask : public Task
 {
   public:
-    MandlebrotTask(Display *display)
+    MandlebrotTask(Display *display) : _configuration("mand_config", sizeof(mand_configuration_t))
     {
         _display = display;
         _w = _display->width();
@@ -24,7 +32,7 @@ class MandlebrotTask : public Task
         _mandlebrot.init(_w, _h);
     }
 
-    virtual bool run(bool overlay_visible, uint64_t now, TickType_t *sleep_time)
+    virtual bool run(uint64_t now, TickType_t *sleep_time)
     {
         _mandlebrot.step();
 
@@ -36,7 +44,7 @@ class MandlebrotTask : public Task
             }
         }
 
-        if (overlay_visible)
+        if (_overlay_visible)
         {
             draw_overlay();
         }
@@ -90,6 +98,9 @@ class MandlebrotTask : public Task
     float _y;
     float _size;
 
+    bool _overlay_visible;
+
+    Configuration _configuration;
     Mandlebrot _mandlebrot;
     Display *_display;
 

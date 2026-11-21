@@ -12,10 +12,19 @@
 #include <freertos/FreeRTOS.h>
 #include <stdio.h>
 
+#define COMMAND_STATE 0x40
+#define COMMAND_FEED_RATE 0x41
+#define COMMAND_KILL_RATE 0x42
+#define COMMAND_SPAWN_CHANCE 0x43
+#define COMMAND_PRESET 0x44
+#define COMMAND_RESET 0x45
+#define COMMAND_ADD 0x46
+#define COMMAND_HUE 0x47
+
 class SimTask : public Task
 {
   public:
-    SimTask(Display *display)
+    SimTask(Display *display) : _configuration("sim_config", sizeof(sim_configuration_t))
     {
         _display = display;
         _w = _display->width();
@@ -27,7 +36,7 @@ class SimTask : public Task
         _simulation.init(_w, _h);
     }
 
-    virtual bool run(bool overlay_visible, uint64_t now, TickType_t *sleep_time)
+    virtual bool run(uint64_t now, TickType_t *sleep_time)
     {
         _simulation.simulate();
 
@@ -41,7 +50,7 @@ class SimTask : public Task
             }
         }
 
-        if (overlay_visible)
+        if (_overlay_visible)
         {
             draw_overlay();
         }
@@ -50,7 +59,7 @@ class SimTask : public Task
 
         int took = (int)(t - now);
 
-        if (took > 100000)
+        if (took > 50000)
         {
             ESP_LOGW(APP_TAG, "Simulator loop took too long [%dus]\n", took);
         }
@@ -102,8 +111,10 @@ class SimTask : public Task
     int _w, _h;
 
     Simulation _simulation;
+    Configuration _configuration;
     Display *_display;
     bool _preset_changed;
+    bool _overlay_visible;
 
     void draw_overlay()
     {

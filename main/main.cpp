@@ -1,8 +1,10 @@
+#include "bt/bluetooth.h"
+#include "common.h"
+#include "config/config.h"
 #include "driver/gpio.h"
+#include "esp_littlefs.h"
 #include "gif/gif_task.h"
-#include "io/bluetooth.h"
-#include "io/encoder.h"
-#include "io/espio.h"
+#include "jobs/dispatcher.h"
 #include "mandlebrot/mand_task.h"
 #include "matrix/display.h"
 #include "matrix/hub75_driver.h"
@@ -14,186 +16,31 @@
 #include <freertos/FreeRTOS.h>
 #include <stdio.h>
 
+#include <dirent.h>
+#include <sys/stat.h>
+
+typedef struct
+{
+    display_mode_t mode;
+} global_configuration_t;
+
+global_configuration_t global_config;
+Configuration global_configuration("global_config", sizeof(global_configuration_t));
+
 Hub75Driver hub75_driver;
 Display display(&hub75_driver);
+
 SimTask sim_task(&display);
 GIFTask gif_task(&display);
 MandlebrotTask mand_task(&display);
 Bluetooth bt;
-uint64_t overlay_expiry;
-bool preset_changed;
 uint64_t save_configuration_time;
 Task *current_task;
+mode_t current_mode;
 
 const char *APP_TAG = "APP";
 
-#define TICK_SIZE (10)
-
-#define OVERLAY_TIME (1500LL * 1000LL)
-#define CONFIGURATION_SAVE_DELAY (10LL * 1000LL * 1000LL)
-
-esp_err_t save_configuration(Task *task)
-{
-    nvs_handle_t handle;
-    esp_err_t err = nvs_open("settings", NVS_READWRITE, &handle);
-
-    if (err != ESP_OK)
-    {
-        return err;
-    }
-
-    uint8_t buffer[256];
-    size_t len = task->get_configuration(buffer);
-
-    err = nvs_set_blob(handle, "config", buffer, len);
-
-    if (err == ESP_OK)
-    {
-        err = nvs_commit(handle);
-    }
-
-    nvs_close(handle);
-    return err;
-}
-
-esp_err_t load_configuration(Task *task)
-{
-    nvs_handle_t handle;
-    esp_err_t err = nvs_open("settings", NVS_READONLY, &handle);
-    if (err != ESP_OK)
-    {
-        return err;
-    }
-
-    uint8_t buffer[256];
-    size_t len = task->get_configuration_size();
-
-    err = nvs_get_blob(handle, "config", buffer, &len);
-
-    task->set_configuration(buffer);
-
-    nvs_close(handle);
-    return err;
-}
-
-void configuration_writer(void *)
-{
-    for (;;)
-    {
-        uint64_t time = esp_timer_get_time();
-
-        if (save_configuration_time > 0 && save_configuration_time < time)
-        {
-            save_configuration_time = 0;
-
-            esp_err_t err = save_configuration(current_task);
-
-            if (err == ESP_OK)
-            {
-                ESP_LOGI(APP_TAG, "Saved config OK");
-            }
-            else
-            {
-                ESP_LOGW(APP_TAG, "Failed to save config: %d", err);
-            }
-        }
-
-        vTaskDelay(pdMS_TO_TICKS(2000));
-    }
-}
-
-void configuration_init()
-{
-    load_configuration(current_task);
-
-    save_configuration_time = 0;
-
-    xTaskCreatePinnedToCore(configuration_writer, "config_writer", 4096, NULL, 1, NULL, 1);
-}
-
-void check_bt(uint64_t now)
-{
-    int16_t value;
-
-    if (bt.feed_rate_updated(&value))
-    {
-        float v = value / 10000.0f;
-
-        // sim.set_feed_rate(v);
-
-        ESP_LOGI(APP_TAG, "Feed Rate: [%d] %0.4f%%", value, v);
-
-        overlay_expiry = now + OVERLAY_TIME;
-        save_configuration_time = now + CONFIGURATION_SAVE_DELAY;
-    }
-
-    if (bt.kill_rate_updated(&value))
-    {
-        float v = value / 10000.0f;
-
-        // sim.set_kill_rate(v);
-
-        ESP_LOGI(APP_TAG, "Kill Rate: [%d] %0.4f%%", value, v);
-
-        overlay_expiry = now + OVERLAY_TIME;
-        save_configuration_time = now + CONFIGURATION_SAVE_DELAY;
-    }
-
-    if (bt.spawn_chance_updated(&value))
-    {
-        // sim.set_spawn_chance(value);
-
-        ESP_LOGI(APP_TAG, "Spawn Chance: [%d] %0.2f", value, value / 100.0f);
-
-        overlay_expiry = now + OVERLAY_TIME;
-        save_configuration_time = now + CONFIGURATION_SAVE_DELAY;
-        preset_changed = false;
-    }
-
-    if (bt.preset_updated(&value))
-    {
-        // sim.set_preset(value);
-
-        ESP_LOGI(APP_TAG, "Selected Preset: %d", value);
-
-        overlay_expiry = now + OVERLAY_TIME;
-        save_configuration_time = now + CONFIGURATION_SAVE_DELAY;
-        preset_changed = true;
-    }
-
-    if (bt.add_command(&value))
-    {
-        int16_t x = (value >> 8) & 0xFF;
-        int16_t y = value & 0xFF;
-        // sim.add(x, y);
-
-        ESP_LOGI(APP_TAG, "Add: %d, %d", x, y);
-    }
-
-    if (bt.hue_command())
-    {
-        // sim.next_hue();
-
-        ESP_LOGI(APP_TAG, "Next hue");
-
-        save_configuration_time = now + CONFIGURATION_SAVE_DELAY;
-    }
-
-    if (bt.reset_command())
-    {
-        // sim.reset();
-
-        ESP_LOGI(APP_TAG, "Reset");
-    }
-}
-
-void clear_screen(int active)
-{
-    if (active)
-    {
-        display.clear_screen();
-    }
-}
+#define COMMAND_MODE 0x7E
 
 void main_task(void *)
 {
@@ -206,9 +53,7 @@ void main_task(void *)
     {
         uint64_t now = esp_timer_get_time();
 
-        // check_bt(now);
-
-        bool sleep_until = current_task->run(now < overlay_expiry, now, &sleep_time);
+        bool sleep_until = current_task->run(now, &sleep_time);
 
         display.commit_frame();
 
@@ -226,18 +71,109 @@ void main_task(void *)
 void dump_memory(const char *title)
 {
     printf("\n============== %s ============\n", title);
-    printf("Internal: %u (%u)\n", heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+    printf("Internal: %u (%u)\n",
+           heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
            heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
-    printf("DMA:      %u\n", heap_caps_get_free_size(MALLOC_CAP_DMA));
-    printf("PSRAM:    %u\n", heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
-    printf("8-bit:    %u\n", heap_caps_get_free_size(MALLOC_CAP_8BIT));
+    printf("DMA: %u (%u)\n", heap_caps_get_free_size(MALLOC_CAP_DMA), heap_caps_get_largest_free_block(MALLOC_CAP_DMA));
+    printf("PSRAM: %u (%u)\n", heap_caps_get_free_size(MALLOC_CAP_SPIRAM), heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM));
+    printf("8-bit:: %u (%u)\n", heap_caps_get_free_size(MALLOC_CAP_8BIT), heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+}
+
+extern "C" void set_display_mode(display_mode_t mode)
+{
+    mode = (display_mode_t)((uint8_t)mode % 3);
+
+    bool save = mode != global_config.mode;
+
+    global_config.mode = mode;
+
+    switch (global_config.mode)
+    {
+    case 0:
+        current_task = &sim_task;
+        break;
+    case 1:
+        current_task = &gif_task;
+        break;
+    case 2:
+        current_task = &mand_task;
+        break;
+    }
+
+    if (save)
+    {
+        global_configuration.save(&global_config);
+    }
+}
+
+void list_files()
+{
+    DIR *dir = opendir("/vol");
+
+    if (!dir)
+        return;
+
+    ESP_LOGI(APP_TAG, "Listing files");
+    struct dirent *entry;
+
+    int files = 0;
+    while ((entry = readdir(dir)) != nullptr)
+    {
+        struct stat st;
+        char path[300];
+
+        snprintf(path, 300, "/vol/%s", entry->d_name);
+
+        if (stat(path, &st) == 0)
+        {
+            files++;
+
+            ESP_LOGI(APP_TAG, "%s (%ld bytes)", entry->d_name, (long)st.st_size);
+        }
+    }
+
+    closedir(dir);
+    ESP_LOGI(APP_TAG, "Found: %d", files);
+}
+
+void init_fs()
+{
+    ESP_LOGI(APP_TAG, "Starting LittleFS");
+
+    esp_vfs_littlefs_conf_t conf = {};
+    conf.base_path = "/vol";
+    conf.partition_label = "storage";
+    conf.format_if_mount_failed = true;
+    conf.dont_mount = false;
+
+    ESP_ERROR_CHECK(esp_vfs_littlefs_register(&conf));
+
+    list_files();
 }
 
 extern "C" void app_main(void)
 {
     nvs_flash_init();
 
-    // bt.init(NULL);
+    init_fs();
+
+    bt.init();
+
+    register_bluetooth_event_handler(COMMAND_MODE,
+                                     [](bluetooth_event_t *event)
+                                     {
+                                         if (event->op == BLE_GATT_ACCESS_OP_READ_CHR)
+                                         {
+                                             event->send_size = 1;
+                                             event->send_buffer[0] = (uint8_t)global_config.mode;
+                                         }
+                                         else
+                                         {
+                                             set_display_mode((display_mode_t)(event->recv_buffer[0]));
+                                         }
+                                     });
+
+    dispatcher_init();
 
     hub75_driver.init();
 
@@ -247,11 +183,13 @@ extern "C" void app_main(void)
     sim_task.init();
     mand_task.init();
 
-    current_task = &mand_task;
+    global_configuration.load(&global_config);
 
-    configuration_init();
+    set_display_mode(global_config.mode);
 
-    overlay_expiry = esp_timer_get_time() + 2000000LL;
+    start_config_task();
+
+    dump_memory("init");
 
     xTaskCreatePinnedToCore(main_task, "main_task", 4096, NULL, 5, NULL, 1);
 }

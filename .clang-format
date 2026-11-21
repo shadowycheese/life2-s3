@@ -1,6 +1,9 @@
 BasedOnStyle: LLVM
 BreakBeforeBraces: Allman
+BinPackArguments: false
+BinPackParameters: false
 AllowShortFunctionsOnASingleLine: None
+AllowAllParametersOfDeclarationOnNextLine: false
 IndentWidth: 4
 AccessModifierOffset: -2
 ColumnLimit: 130

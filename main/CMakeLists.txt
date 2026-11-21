@@ -1,22 +1,26 @@
 idf_component_register(SRCS 
                         "main.cpp"
                         "matrix/gfx/Adafruit_GFX.cpp"
-                        "io/espio.c"
-                        "io/encoder.cpp"
-                        "io/bluetooth.cpp"
-                        "gif/animated_gif.cpp"
-                        "gif/gif.inl"
+                        "bt/bluetooth.cpp"
+                        "gif/lib/AnimatedGIF.cpp"
+                        "gif/lib/gif.inl"
+                        "gif/gif_player.cpp"
+                        "config/config.cpp"
+                        "jobs/dispatcher.cpp"
                        INCLUDE_DIRS 
                         "."
+                        "jobs/"
+                        "config/"
                         "matrix/"
-                        "matrix/gfx"
-                        "io/"
+                        "matrix/gfx/"
+                        "bt/"
                         "simulation/"
-                        "gif/"
-                        "gif/sample"
+                        "gif/lib/"
+                        "mandlebrot/"
                        REQUIRES 
                         driver
                         bt
+                        littlefs
                         nvs_flash
                         esp_timer
                         esp_lcd)
