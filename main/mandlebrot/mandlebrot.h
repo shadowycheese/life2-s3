@@ -5,12 +5,17 @@
 #include <esp_log.h>
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 
 #define MAX_LOOPS (64)
 #define SUB_FRAMES (128)
-#define ZOOM_PATH_LEN 180
+
+// A small set of keyframes describing one closed tour. The frames between
+// them are generated at runtime (see preparePath/step), so the expensive part
+// of each step is still rendering the Mandelbrot, not walking the path.
+#define ZOOM_KEYS 25
 
 typedef struct
 {
@@ -18,7 +23,8 @@ typedef struct
     float imag;
     float scale;
     uint16_t max_iter;
-} zoom_frame_t;
+    uint16_t frames; // interpolated frames from this key to the next one
+} zoom_key_t;
 
 class Mandlebrot
 {
@@ -35,13 +41,15 @@ class Mandlebrot
         _x = 0.2f;
         _y = -0.4f;
         _size = 0.5f;
-        _step = 0;
+        _frame = 0;
 
         int array_size = _w * _h;
 
         size_t grid_bytes = sizeof(uint16_t) * array_size;
 
         _grid = (uint16_t *)(void *)heap_caps_aligned_alloc(4, grid_bytes, MALLOC_CAP_INTERNAL);
+
+        preparePath();
     }
 
     uint16_t iterations(int x, int y)
@@ -101,17 +109,46 @@ class Mandlebrot
 
     void step()
     {
-        const zoom_frame_t &frame = _path[_step];
+        // Find the keyframe segment containing the current frame.
+        int s = _frame;
+        int k = 0;
+        while ((k < ZOOM_KEYS - 1) && (s >= _durations[k]))
+        {
+            s -= _durations[k];
+            k++;
+        }
+
+        const int h = _durations[k];
+        const double t = (double)s / (double)h;
+        const double t2 = t * t;
+        const double t3 = t2 * t;
+        const int kn = (k + 1) % ZOOM_KEYS;
+
+        // Cubic Hermite basis functions. Tangents are shape-preserving and
+        // scaled by the segment duration, so velocity stays continuous at
+        // keyframes without overshooting into solid interior regions.
+        const double h00 = 2.0 * t3 - 3.0 * t2 + 1.0;
+        const double h10 = t3 - 2.0 * t2 + t;
+        const double h01 = -2.0 * t3 + 3.0 * t2;
+        const double h11 = t3 - t2;
+
+        const double real = h00 * _values[k][0] + h10 * h * _tangents[k][0] + h01 * _values[kn][0] + h11 * h * _tangents[kn][0];
+        const double imag = h00 * _values[k][1] + h10 * h * _tangents[k][1] + h01 * _values[kn][1] + h11 * h * _tangents[kn][1];
+        const double logScale = h00 * _values[k][2] + h10 * h * _tangents[k][2] + h01 * _values[kn][2] + h11 * h * _tangents[kn][2];
+        const double iterF = h00 * _values[k][3] + h10 * h * _tangents[k][3] + h01 * _values[kn][3] + h11 * h * _tangents[kn][3];
+
+        // Zoom geometrically: constant octaves per frame, no scale overshoot.
+        const float scale = (float)pow(2.0, logScale);
+        const int max_iter = (int)(iterF + 0.5);
 
         const int width = _w;
         const int height = _h;
-        const int max_iter = frame.max_iter;
-        const float step_x = frame.scale / (float)width;
-        const float step_y = frame.scale / (float)height;
-        const float real_start = frame.real;
+        const float step_x = scale / (float)width;
+        const float step_y = scale / (float)height;
+        const float real_start = (float)real - scale / 2;
 
         uint16_t *__restrict out = _grid;
-        float i = frame.imag;
+        float i = (float)imag - scale / 2;
 
         for (int y = 0; y < height; y++)
         {
@@ -126,212 +163,108 @@ class Mandlebrot
             i += step_y;
         }
 
-        if (++_step == ZOOM_PATH_LEN)
+        if (++_frame == _total_frames)
         {
-            _step = 0;
+            _frame = 0;
         }
     }
 
   private:
     int _w, _h;
 
-    int _step;
+    int _frame;
+    int _total_frames;
 
     float _x;
     float _y;
     float _size;
     uint16_t *_grid;
 
-    const zoom_frame_t _path[ZOOM_PATH_LEN] = {
-        // --- Segment 0: Start -> Seahorse Valley Entry (Frames 0-35) ---
-        {-0.500000f, 0.000000f, 3.000000f, 80},
-        {-0.500555f, 0.000249f, 2.973784f, 80},
-        {-0.502175f, 0.000977f, 2.898434f, 80},
-        {-0.504793f, 0.002152f, 2.780528f, 81},
-        {-0.508346f, 0.003747f, 2.628571f, 82},
-        {-0.512767f, 0.005732f, 2.451936f, 83},
-        {-0.517992f, 0.008078f, 2.259936f, 84},
-        {-0.523956f, 0.010756f, 2.061124f, 86},
-        {-0.530594f, 0.013736f, 1.862898f, 88},
-        {-0.537841f, 0.016990f, 1.671294f, 90},
-        {-0.545633f, 0.020488f, 1.490878f, 92},
-        {-0.553903f, 0.024201f, 1.324777f, 94},
-        {-0.562587f, 0.028100f, 1.174814f, 96},
-        {-0.571620f, 0.032156f, 1.041664f, 98},
-        {-0.580937f, 0.036339f, 0.925075f, 100},
-        {-0.590473f, 0.040620f, 0.824115f, 102},
-        {-0.600163f, 0.044971f, 0.737401f, 104},
-        {-0.609941f, 0.049361f, 0.663315f, 106},
-        {-0.619743f, 0.053762f, 0.600181f, 107},
-        {-0.629504f, 0.058145f, 0.546394f, 109},
-        {-0.639158f, 0.062479f, 0.500462f, 111},
-        {-0.648641f, 0.066737f, 0.461032f, 112},
-        {-0.657887f, 0.070888f, 0.426898f, 113},
-        {-0.666832f, 0.074904f, 0.396999f, 115},
-        {-0.675410f, 0.078756f, 0.370415f, 116},
-        {-0.683556f, 0.082413f, 0.346350f, 117},
-        {-0.691206f, 0.085848f, 0.324124f, 118},
-        {-0.698294f, 0.089030f, 0.303152f, 119},
-        {-0.704755f, 0.091931f, 0.282931f, 121},
-        {-0.710524f, 0.094521f, 0.263016f, 122},
-        {-0.715536f, 0.096771f, 0.243003f, 123},
-        {-0.719727f, 0.098653f, 0.222502f, 125},
-        {-0.723030f, 0.100136f, 0.201122f, 126},
-        {-0.725381f, 0.101191f, 0.178452f, 129},
-        {-0.726715f, 0.101790f, 0.154032f, 131},
-        {-0.726966f, 0.101903f, 0.127323f, 134},
+    // Path fields are [real, imag, log2(scale), max_iter].
+    double _values[ZOOM_KEYS][4];
+    double _tangents[ZOOM_KEYS][4];
+    int _durations[ZOOM_KEYS];
 
-        // --- Segment 1: Seahorse Valley -> Deep Spiral Target (Frames 36-71) ---
-        {-0.745000f, 0.110000f, 0.060000f, 147},
-        {-0.744997f, 0.110049f, 0.059506f, 148},
-        {-0.744988f, 0.110193f, 0.058083f, 148},
-        {-0.744973f, 0.110426f, 0.055849f, 149},
-        {-0.744952f, 0.110742f, 0.052958f, 150},
-        {-0.744927f, 0.111135f, 0.049581f, 151},
-        {-0.744897f, 0.111600f, 0.045893f, 152},
-        {-0.744863f, 0.112130f, 0.042062f, 154},
-        {-0.744825f, 0.112720f, 0.038236f, 155},
-        {-0.744783f, 0.113364f, 0.034541f, 157},
-        {-0.744739f, 0.114056f, 0.031076f, 159},
-        {-0.744692f, 0.114791f, 0.027913f, 161},
-        {-0.744642f, 0.115563f, 0.025096f, 163},
-        {-0.744591f, 0.116366f, 0.022645f, 164},
-        {-0.744538f, 0.117194f, 0.020560f, 166},
-        {-0.744483f, 0.118042f, 0.018824f, 168},
-        {-0.744428f, 0.118903f, 0.017408f, 169},
-        {-0.744372f, 0.119772f, 0.016274f, 170},
-        {-0.744316f, 0.120644f, 0.015381f, 171},
-        {-0.744260f, 0.121511f, 0.014685f, 172},
-        {-0.744205f, 0.122370f, 0.014141f, 173},
-        {-0.744151f, 0.123213f, 0.013708f, 173},
-        {-0.744098f, 0.124035f, 0.013347f, 174},
-        {-0.744047f, 0.124830f, 0.013022f, 174},
-        {-0.743998f, 0.125593f, 0.012702f, 174},
-        {-0.743951f, 0.126317f, 0.012358f, 175},
-        {-0.743907f, 0.126997f, 0.011966f, 175},
-        {-0.743866f, 0.127627f, 0.011504f, 176},
-        {-0.743829f, 0.128201f, 0.010953f, 177},
-        {-0.743796f, 0.128714f, 0.010297f, 178},
-        {-0.743767f, 0.129159f, 0.009523f, 179},
-        {-0.743743f, 0.129531f, 0.008618f, 181},
-        {-0.743724f, 0.129824f, 0.007574f, 183},
-        {-0.743711f, 0.130033f, 0.006381f, 186},
-        {-0.743703f, 0.130152f, 0.005031f, 191},
-        {-0.743702f, 0.130174f, 0.003516f, 197},
+    void preparePath()
+    {
+        _total_frames = 0;
 
-        // --- Segment 2: Deep Target -> North Cardioid Edge Arc (Frames 72-107) ---
-        {-0.743600f, 0.131800f, 0.001500f, 212},
-        {-0.743161f, 0.132908f, 0.001516f, 211},
-        {-0.741881f, 0.136139f, 0.001563f, 211},
-        {-0.739812f, 0.141362f, 0.001644f, 210},
-        {-0.737005f, 0.148447f, 0.001760f, 209},
-        {-0.733513f, 0.157263f, 0.001916f, 207},
-        {-0.729387f, 0.167681f, 0.002116f, 206},
-        {-0.724680f, 0.179569f, 0.002367f, 204},
-        {-0.719442f, 0.192797f, 0.002675f, 202},
-        {-0.713726f, 0.207235f, 0.003048f, 199},
-        {-0.707584f, 0.222752f, 0.003497f, 197},
-        {-0.701068f, 0.239218f, 0.004033f, 194},
-        {-0.694230f, 0.256503f, 0.004669f, 192},
-        {-0.687121f, 0.274475f, 0.005421f, 189},
-        {-0.679793f, 0.293006f, 0.006307f, 187},
-        {-0.672298f, 0.311963f, 0.007346f, 184},
-        {-0.664688f, 0.331218f, 0.008563f, 181},
-        {-0.657014f, 0.350638f, 0.009982f, 179},
-        {-0.649329f, 0.370095f, 0.011632f, 176},
-        {-0.641684f, 0.389457f, 0.013545f, 173},
-        {-0.634131f, 0.408595f, 0.015757f, 171},
-        {-0.626722f, 0.427378f, 0.018307f, 168},
-        {-0.619509f, 0.445675f, 0.021238f, 166},
-        {-0.612543f, 0.463357f, 0.024599f, 163},
-        {-0.605877f, 0.480293f, 0.028442f, 160},
-        {-0.599562f, 0.496352f, 0.032825f, 158},
-        {-0.593650f, 0.511404f, 0.037811f, 155},
-        {-0.588192f, 0.525319f, 0.043470f, 153},
-        {-0.583242f, 0.537967f, 0.049877f, 151},
-        {-0.578850f, 0.549217f, 0.057113f, 148},
-        {-0.575068f, 0.558939f, 0.065267f, 146},
-        {-0.571949f, 0.567002f, 0.074434f, 144},
-        {-0.569544f, 0.573277f, 0.084718f, 141},
-        {-0.567905f, 0.577633f, 0.096231f, 139},
-        {-0.567084f, 0.579939f, 0.109094f, 137},
-        {-0.567132f, 0.580066f, 0.123438f, 135},
+        for (int i = 0; i < ZOOM_KEYS; i++)
+        {
+            _durations[i] = _keys[i].frames;
+            _total_frames += _keys[i].frames;
+            _values[i][0] = _keys[i].real;
+            _values[i][1] = _keys[i].imag;
+            _values[i][2] = log2((double)_keys[i].scale);
+            _values[i][3] = _keys[i].max_iter;
+        }
 
-        // --- Segment 3: North Cardioid Arc -> Alternate Exit Tendrils (Frames 108-143) ---
-        {-0.550000f, 0.620000f, 0.150000f, 132},
-        {-0.549116f, 0.620941f, 0.149627f, 132},
-        {-0.546537f, 0.623686f, 0.148534f, 132},
-        {-0.542366f, 0.628125f, 0.146750f, 132},
-        {-0.536704f, 0.634149f, 0.144305f, 132},
-        {-0.529655f, 0.641649f, 0.141227f, 133},
-        {-0.521322f, 0.650516f, 0.137544f, 133},
-        {-0.511807f, 0.660641f, 0.133282f, 134},
-        {-0.501213f, 0.671915f, 0.128467f, 134},
-        {-0.489643f, 0.684228f, 0.123124f, 135},
-        {-0.477200f, 0.697471f, 0.117278f, 136},
-        {-0.463987f, 0.711535f, 0.110953f, 137},
-        {-0.450107f, 0.726312f, 0.104173f, 138},
-        {-0.435661f, 0.741691f, 0.096962f, 139},
-        {-0.420754f, 0.757564f, 0.089343f, 140},
-        {-0.405487f, 0.773822f, 0.081340f, 142},
-        {-0.389964f, 0.790356f, 0.072976f, 144},
-        {-0.374288f, 0.807056f, 0.064275f, 146},
-        {-0.358561f, 0.823814f, 0.055260f, 149},
-        {-0.342887f, 0.840520f, 0.045955f, 152},
-        {-0.327367f, 0.857065f, 0.036383f, 156},
-        {-0.312106f, 0.873340f, 0.026569f, 162},
-        {-0.297205f, 0.889236f, 0.016537f, 170},
-        {-0.282767f, 0.904643f, 0.051000f, 150},
-        {-0.268896f, 0.919453f, 0.050850f, 150},
-        {-0.255695f, 0.933556f, 0.050700f, 150},
-        {-0.243265f, 0.946843f, 0.050560f, 150},
-        {-0.231710f, 0.959205f, 0.050430f, 150},
-        {-0.221133f, 0.970533f, 0.050310f, 150},
-        {-0.211637f, 0.980717f, 0.050200f, 150},
-        {-0.203324f, 0.989649f, 0.050110f, 150},
-        {-0.196298f, 0.997219f, 0.050040f, 150},
-        {-0.190660f, 1.003318f, 0.050010f, 150},
-        {-0.186515f, 1.007837f, 0.050005f, 150},
-        {-0.183965f, 1.010667f, 0.050002f, 150},
-        {-0.183113f, 1.011599f, 0.050001f, 150},
+        // Fritsch-Carlson tangents for a closed, non-uniformly sampled path.
+        // Setting a tangent to zero at a local extremum keeps the curve
+        // monotone between keys, which prevents overshoot into the set.
+        for (int f = 0; f < 4; f++)
+        {
+            for (int i = 0; i < ZOOM_KEYS; i++)
+            {
+                const int ip = (i - 1 + ZOOM_KEYS) % ZOOM_KEYS;
+                const int in = (i + 1) % ZOOM_KEYS;
 
-        // --- Segment 4: Alternate Exit -> Return to Start (Frames 144-179) ---
-        {-0.160000f, 1.035000f, 0.050000f, 150},
-        {-0.160771f, 1.032653f, 0.050469f, 150},
-        {-0.163022f, 1.025803f, 0.051870f, 150},
-        {-0.166659f, 1.014738f, 0.054198f, 149},
-        {-0.171590f, 0.999742f, 0.057463f, 148},
-        {-0.177719f, 0.981099f, 0.061691f, 147},
-        {-0.184955f, 0.959096f, 0.066926f, 146},
-        {-0.193204f, 0.934018f, 0.073230f, 144},
-        {-0.202371f, 0.906149f, 0.080684f, 142},
-        {-0.212364f, 0.875774f, 0.089390f, 140},
-        {-0.223089f, 0.843179f, 0.099474f, 139},
-        {-0.234452f, 0.808649f, 0.111085f, 137},
-        {-0.246360f, 0.772469f, 0.124397f, 135},
-        {-0.258719f, 0.734923f, 0.139617f, 133},
-        {-0.271436f, 0.696297f, 0.156982f, 131},
-        {-0.284417f, 0.656876f, 0.176765f, 129},
-        {-0.297569f, 0.616944f, 0.199279f, 127},
-        {-0.310799f, 0.576787f, 0.224884f, 125},
-        {-0.324012f, 0.536689f, 0.253992f, 122},
-        {-0.337115f, 0.496936f, 0.287074f, 120},
-        {-0.350016f, 0.457813f, 0.324667f, 118},
-        {-0.362620f, 0.419604f, 0.367381f, 116},
-        {-0.374834f, 0.382594f, 0.415906f, 114},
-        {-0.386564f, 0.347069f, 0.471019f, 112},
-        {-0.397718f, 0.313313f, 0.533593f, 110},
-        {-0.408201f, 0.281611f, 0.604610f, 107},
-        {-0.417920f, 0.252248f, 0.685167f, 105},
-        {-0.426782f, 0.225509f, 0.776492f, 103},
-        {-0.434693f, 0.201680f, 0.879955f, 101},
-        {-0.441559f, 0.180044f, 0.997080f, 99},
-        {-0.447288f, 0.163887f, 1.129558f, 97},
-        {-0.451785f, 0.150493f, 1.279263f, 95},
-        {-0.454958f, 0.141147f, 1.448270f, 92},
-        {-0.456712f, 0.136135f, 1.638866f, 90},
-        {-0.456954f, 0.135742f, 1.853573f, 88},
-        {-0.478477f, 0.067871f, 2.426786f, 84}};
+                const double dPrev = (_values[i][f] - _values[ip][f]) / (double)_durations[ip];
+                const double dNext = (_values[in][f] - _values[i][f]) / (double)_durations[i];
+
+                double m = 0.0;
+                if ((dPrev > 0.0 && dNext > 0.0) || (dPrev < 0.0 && dNext < 0.0))
+                {
+                    const double w1 = 2.0 * _durations[i] + _durations[ip];
+                    const double w2 = _durations[i] + 2.0 * _durations[ip];
+                    m = (w1 + w2) / ((w1 / dPrev) + (w2 / dNext));
+
+                    const double lim = 3.0 * fmin(fabs(dPrev), fabs(dNext));
+                    if (m > lim)
+                    {
+                        m = lim;
+                    }
+                    else if (m < -lim)
+                    {
+                        m = -lim;
+                    }
+                }
+                _tangents[i][f] = m;
+            }
+        }
+    }
+
+    // One closed loop: seahorse valley -> spiral -> triple spiral ->
+    // elephant valley -> lower boundary -> mini Mandelbrot -> wide.
+    // Each zoom-in is paired with a zoom-out and travel legs stay at a
+    // moderate scale so the boundary is always visible (never all black).
+    const zoom_key_t _keys[ZOOM_KEYS] = {
+        {-0.500000f, 0.000000f, 3.00000f,  90, 24}, // wide establishing view
+        {-0.750000f, 0.110000f, 0.50000f, 135, 30}, // seahorse valley approach
+        {-0.745000f, 0.110000f, 0.15000f, 180, 26},
+        {-0.744000f, 0.160000f, 0.03000f, 238, 26},
+        {-0.746975f, 0.135175f, 0.00500f, 275, 28}, // deep spiral
+        {-0.744000f, 0.160000f, 0.03000f, 238, 26},
+        {-0.750000f, 0.110000f, 0.50000f, 135, 30}, // back out
+        {-0.450000f, 0.400000f, 0.50000f, 150, 28}, // travel north along boundary
+        {-0.125000f, 0.744000f, 0.50000f, 160, 28},
+        {-0.088000f, 0.654000f, 0.12000f, 206, 26}, // triple spiral approach
+        {-0.058000f, 0.661500f, 0.02500f, 238, 28}, // triple spiral close
+        {-0.088000f, 0.654000f, 0.12000f, 206, 26},
+        {-0.125000f, 0.744000f, 0.50000f, 160, 28}, // back out
+        { 0.350000f, 0.350000f, 0.50000f, 155, 28}, // travel around cardioid (outside)
+        { 0.250000f, 0.000000f, 0.50000f, 145, 28}, // cusp
+        { 0.320000f, 0.010000f, 0.08000f, 211, 26}, // elephant valley
+        { 0.250000f, 0.000000f, 0.50000f, 145, 28},
+        { 0.350000f,-0.350000f, 0.50000f, 150, 26}, // travel south
+        { 0.150000f,-0.600000f, 0.50000f, 155, 28},
+        {-0.150000f,-0.600000f, 0.50000f, 155, 28},
+        {-0.450000f,-0.550000f, 0.50000f, 150, 28},
+        {-0.750000f,-0.110000f, 0.20000f, 170, 26}, // lower seahorse
+        {-0.900000f,-0.450000f, 0.70000f, 150, 28}, // bypass below period-2 bulb
+        {-1.200000f, 0.000000f, 1.00000f, 110, 30}, // antenna
+        {-1.768800f, 0.001500f, 0.08000f, 220, 42}, // mini Mandelbrot (then back to wide)
+    };
 };
 
 #endif

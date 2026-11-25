@@ -136,9 +136,11 @@ class Simulation
         return _feed_rate;
     }
 
-    inline void next_hue()
+    inline int next_hue()
     {
         _hue = (_hue + 1) % 6;
+
+        return _hue;
     }
 
     inline void add(int16_t x, int16_t y)
@@ -246,8 +248,8 @@ class Simulation
     float _kill_rate;
     int16_t _spawn_chance;
 
-    __attribute__((always_inline)) inline uint16_t pack_band_colour(float f, float r0, float g0, float b0,
-                                                                    float r1, float g1, float b1)
+    __attribute__((always_inline)) inline uint16_t
+    pack_band_colour(float f, float r0, float g0, float b0, float r1, float g1, float b1)
     {
         const uint16_t r = (uint16_t)((r0 + (r1 - r0) * f) + 0.5f);
         const uint16_t g = (uint16_t)((g0 + (g1 - g0) * f) + 0.5f);
@@ -284,22 +286,18 @@ class Simulation
         // widths are folded into constants at compile time.
         if (val <= 0.40f)
         {
-            return pack_band_colour(val * (1.0f / (0.40f - 0.00f)),
-                                    0.0f, 0.0f, 0.0f, 4.0f, 1.0f, 9.0f);
+            return pack_band_colour(val * (1.0f / (0.40f - 0.00f)), 0.0f, 0.0f, 0.0f, 4.0f, 1.0f, 9.0f);
         }
         if (val <= 0.60f)
         {
-            return pack_band_colour((val - 0.40f) * (1.0f / (0.60f - 0.40f)),
-                                    4.0f, 1.0f, 9.0f, 9.0f, 0.0f, 13.0f);
+            return pack_band_colour((val - 0.40f) * (1.0f / (0.60f - 0.40f)), 4.0f, 1.0f, 9.0f, 9.0f, 0.0f, 13.0f);
         }
         if (val <= 0.80f)
         {
-            return pack_band_colour((val - 0.60f) * (1.0f / (0.80f - 0.60f)),
-                                    9.0f, 0.0f, 13.0f, 11.0f, 3.0f, 2.0f);
+            return pack_band_colour((val - 0.60f) * (1.0f / (0.80f - 0.60f)), 9.0f, 0.0f, 13.0f, 11.0f, 3.0f, 2.0f);
         }
 
-        return pack_band_colour((val - 0.80f) * (1.0f / (1.00f - 0.80f)),
-                                11.0f, 3.0f, 2.0f, 9.0f, 8.0f, 1.0f);
+        return pack_band_colour((val - 0.80f) * (1.0f / (1.00f - 0.80f)), 11.0f, 3.0f, 2.0f, 9.0f, 8.0f, 1.0f);
     }
 
     inline void spawn()
@@ -353,14 +351,10 @@ class Simulation
                 const cell_t &cell_left_down = src[down_row + left];
                 const cell_t &cell_right_down = src[down_row + right];
 
-                const float lap_a =
-                    0.2f * (cell_right.A + cell_left.A + cell_down.A + cell_up.A) +
-                    0.05f * (cell_left_up.A + cell_right_up.A + cell_left_down.A + cell_right_down.A) -
-                    c.A;
-                const float lap_b =
-                    0.2f * (cell_right.B + cell_left.B + cell_down.B + cell_up.B) +
-                    0.05f * (cell_left_up.B + cell_right_up.B + cell_left_down.B + cell_right_down.B) -
-                    c.B;
+                const float lap_a = 0.2f * (cell_right.A + cell_left.A + cell_down.A + cell_up.A) +
+                                    0.05f * (cell_left_up.A + cell_right_up.A + cell_left_down.A + cell_right_down.A) - c.A;
+                const float lap_b = 0.2f * (cell_right.B + cell_left.B + cell_down.B + cell_up.B) +
+                                    0.05f * (cell_left_up.B + cell_right_up.B + cell_left_down.B + cell_right_down.B) - c.B;
 
                 const float abb = c.A * c.B * c.B;
 

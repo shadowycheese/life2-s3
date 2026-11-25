@@ -39,6 +39,8 @@ typedef struct
 using bluetooth_event_handler_t = std::function<void(bluetooth_event_t *)>;
 
 void register_bluetooth_event_handler(uint8_t command, bluetooth_event_handler_t handler);
+int16_t bt_value(bluetooth_event_t *event);
+float bt_valuef(bluetooth_event_t *event, int16_t scale);
 
 class Bluetooth
 {
@@ -139,7 +141,6 @@ class Bluetooth
 
                 return err;
             }
-            ESP_LOGI(TAG, "Send Read %02X Payload (%d bytes)", event->command, event->send_size);
         }
         else
         {
@@ -154,7 +155,6 @@ class Bluetooth
 
                 return rc;
             }
-            ESP_LOGI(TAG, "Send Notify %02X Payload (%d bytes)", event->command, len);
         }
 
         return ESP_OK;

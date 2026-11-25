@@ -35,56 +35,84 @@ class SimTask : public Task
         register_bluetooth_event_handler(COMMAND_STATE,
                                          [this](bluetooth_event_t *event)
                                          {
-                                             if (event->op == BLE_GATT_ACCESS_OP_READ_CHR)
-                                             {
-                                                 event->send_size = get_state(event->send_buffer);
-                                             }
+                                             event->send_size = get_state(event->send_buffer); //
                                          });
         register_bluetooth_event_handler(COMMAND_FEED_RATE,
                                          [this](bluetooth_event_t *event)
                                          {
-                                             _simulation.set_feed_rate(bt_valuef(event, 10000));
+                                             float fr = bt_valuef(event, 10000);
+
+                                             ESP_LOGI(APP_TAG, "Set feed rate: %0.4f", fr);
+
+                                             _simulation.set_feed_rate(fr);
 
                                              save_configuration();
                                          });
         register_bluetooth_event_handler(COMMAND_KILL_RATE,
                                          [this](bluetooth_event_t *event)
                                          {
-                                             _simulation.set_kill_rate(bt_valuef(event, 10000));
+                                             float kr = bt_valuef(event, 10000);
+
+                                             ESP_LOGI(APP_TAG, "Set kill rate: %0.4f", kr);
+
+                                             _simulation.set_kill_rate(kr);
 
                                              save_configuration();
                                          });
         register_bluetooth_event_handler(COMMAND_SPAWN_CHANCE,
                                          [this](bluetooth_event_t *event)
                                          {
-                                             _simulation.set_spawn_chance(bt_valuef(event, 100));
+                                             int16_t sp = bt_value(event);
+
+                                             ESP_LOGI(APP_TAG, "Set spawn chance: %d", sp);
+
+                                             _simulation.set_spawn_chance(sp);
 
                                              save_configuration();
                                          });
         register_bluetooth_event_handler(COMMAND_PRESET,
                                          [this](bluetooth_event_t *event)
                                          {
-                                             _simulation.set_preset(bt_value(event));
+                                             int16_t preset = bt_value(event);
+
+                                             _simulation.set_preset(preset);
+
+                                             float fr = _simulation.feed_rate();
+                                             float kr = _simulation.kill_rate();
+
+                                             ESP_LOGI(APP_TAG, "Set preset: %d (fr=%0.4f, kr=%0.4f)", preset, fr, kr);
 
                                              save_configuration();
                                          });
         register_bluetooth_event_handler(COMMAND_RESET,
                                          [this](bluetooth_event_t *event)
                                          {
-                                             _simulation.reset(); //
+                                             ESP_LOGI(APP_TAG, "Reset Simulation");
+
+                                             _simulation.reset();
                                          });
         register_bluetooth_event_handler(COMMAND_ADD,
                                          [this](bluetooth_event_t *event)
                                          {
                                              if (event->recv_size >= 2)
                                              {
-                                                 _simulation.add(event->recv_buffer[0], event->recv_buffer[1]);
+                                                 int16_t x = event->recv_buffer[0];
+                                                 int16_t y = event->recv_buffer[1];
+
+                                                 ESP_LOGI(APP_TAG, "Add [%d, %d]", x, y);
+                                                 _simulation.add(x, y);
+                                             }
+                                             else
+                                             {
+                                                 ESP_LOGW(APP_TAG, "Add coordinates missing");
                                              }
                                          });
         register_bluetooth_event_handler(COMMAND_HUE,
                                          [this](bluetooth_event_t *event)
                                          {
-                                             _simulation.next_hue();
+                                             int hue = _simulation.next_hue();
+
+                                             ESP_LOGW(APP_TAG, "Colour cycle [new = %d]", hue);
 
                                              save_configuration();
                                          });
@@ -145,41 +173,25 @@ class SimTask : public Task
         _configuration.save(&config);
     }
 
-    float bt_valuef(bluetooth_event_t *event, int16_t scale)
-    {
-        int16_t value = bt_value(event);
-
-        return (float)value / (float)scale;
-    }
-
-    int16_t bt_value(bluetooth_event_t *event)
-    {
-        if (event->recv_size > 0)
-        {
-            int16_t value = event->recv_buffer[0];
-
-            if (event->recv_size > 0)
-            {
-                value *= 256;
-                value += event->recv_buffer[1];
-            }
-
-            return value;
-        }
-
-        return 0;
-    }
-
     uint16_t get_state(void *buffer)
     {
-        sim_state_t *state = (sim_state_t *)buffer;
+        uint8_t *bytes = (uint8_t *)buffer;
 
-        state->feed_rate = _simulation.feed_rate();
-        state->kill_rate = _simulation.kill_rate();
-        state->preset = _simulation.preset();
-        state->spawn_chance = _simulation.spawn_chance();
+        int16_t feed_rate = _simulation.feed_rate() * 10000;
+        int16_t kill_rate = _simulation.kill_rate() * 10000;
+        int16_t spawn_chance = _simulation.spawn_chance();
+        int16_t preset = _simulation.preset();
 
-        return (uint16_t)sizeof(sim_state_t);
+        bytes[0] = (feed_rate >> 8) & 0xFF;
+        bytes[1] = (feed_rate) & 0xFF;
+        bytes[2] = (kill_rate >> 8) & 0xFF;
+        bytes[3] = (kill_rate) & 0xFF;
+        bytes[4] = (spawn_chance >> 8) & 0xFF;
+        bytes[5] = (spawn_chance) & 0xFF;
+        bytes[6] = (preset >> 8) & 0xFF;
+        bytes[7] = (preset) & 0xFF;
+
+        return 8;
     }
 
     void draw_overlay()

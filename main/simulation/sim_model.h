@@ -14,12 +14,4 @@ typedef struct
     int32_t magic;
 } sim_configuration_t;
 
-typedef struct
-{
-    int16_t preset;
-    float feed_rate;
-    float kill_rate;
-    int16_t spawn_chance;
-} sim_state_t;
-
 #endif

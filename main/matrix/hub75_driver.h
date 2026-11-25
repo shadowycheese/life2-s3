@@ -210,9 +210,18 @@ class Hub75Driver
             gpio_num_t pin;
             int idx;
         } data_map[] = {
-            {PIN_R1, BitR1},        {PIN_G1, BitG1},        {PIN_B1, BitB1},    {PIN_R2, BitR2},
-            {PIN_G2, BitG2},        {PIN_B2, BitB2},        {PIN_A, AddrShift}, {PIN_B, AddrShift + 1},
-            {PIN_C, AddrShift + 2}, {PIN_D, AddrShift + 3}, {PIN_LAT, BitLAT},  {PIN_OE, BitOE},
+            {PIN_R1, BitR1},
+            {PIN_G1, BitG1},
+            {PIN_B1, BitB1},
+            {PIN_R2, BitR2},
+            {PIN_G2, BitG2},
+            {PIN_B2, BitB2},
+            {PIN_A, AddrShift},
+            {PIN_B, AddrShift + 1},
+            {PIN_C, AddrShift + 2},
+            {PIN_D, AddrShift + 3},
+            {PIN_LAT, BitLAT},
+            {PIN_OE, BitOE},
         };
 
         for (auto &m : data_map)
@@ -246,6 +255,7 @@ class Hub75Driver
             ESP_LOGE(TAG, "no descriptor memory");
             return false;
         }
+        ESP_LOGI(TAG, "Allocated memory: %d DMA, %d descriptors", dma_bytes, descriptor_bytes);
         return true;
     }
 

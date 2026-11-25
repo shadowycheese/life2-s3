@@ -26,3 +26,28 @@ void register_bluetooth_event_handler(uint8_t command, bluetooth_event_handler_t
 {
     Bluetooth::instance->_handlers[command - COMMAND_START] = handler;
 }
+
+float bt_valuef(bluetooth_event_t *event, int16_t scale)
+{
+    int16_t value = bt_value(event);
+
+    return (float)value / (float)scale;
+}
+
+int16_t bt_value(bluetooth_event_t *event)
+{
+    if (event->recv_size > 0)
+    {
+        int16_t value = event->recv_buffer[0];
+
+        if (event->recv_size > 0)
+        {
+            value *= 256;
+            value += event->recv_buffer[1];
+        }
+
+        return value;
+    }
+
+    return 0;
+}

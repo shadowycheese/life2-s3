@@ -20,7 +20,6 @@ class Configuration
 
         _config_size = config_size;
         _is_dirty = false;
-        _save_delay = CONFIGURATION_SAVE_DELAY;
 
         register_configuration(this);
     }
@@ -35,17 +34,17 @@ class Configuration
         return _last_edit;
     }
 
-    inline void set_save_delay(uint64_t save_delay)
+    esp_err_t save(const void *config)
     {
-        _save_delay = save_delay;
+        return save(config, CONFIGURATION_SAVE_DELAY);
     }
 
-    esp_err_t save(const void *config)
+    esp_err_t save(const void *config, uint64_t save_after)
     {
         memcpy(_write_buffer, config, _config_size);
 
         _last_edit = esp_timer_get_time();
-        _next_save = _last_edit + _save_delay;
+        _next_save = _last_edit + save_after;
 
         return ESP_OK;
     }
@@ -75,7 +74,6 @@ class Configuration
     size_t _config_size;
     bool _is_dirty;
     void *_write_buffer;
-    uint64_t _save_delay;
 
     static void register_configuration(Configuration *configuration);
     static void flush();

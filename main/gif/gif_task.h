@@ -25,6 +25,7 @@ typedef struct
 #define COMMAND_GIF_BLOCK 0x51
 #define COMMAND_GIF_ABORT 0x52
 #define COMMAND_GIF_END 0x53
+#define COMMAND_GIF_SPEED 0x54
 
 #define BLOCK_SIZE 250
 #define WRITE_SIZE (1024 * 16)
@@ -34,6 +35,7 @@ typedef struct
 typedef struct
 {
     char name[32];
+    float _playback_speed;
     uint32_t magic;
 } gif_configuration_t;
 
@@ -49,9 +51,15 @@ class GIFTask : public Task
     {
         _gif_player.init(_display);
         _save_buffer = (uint8_t *)heap_caps_aligned_alloc(16, 1024 * 1024, MALLOC_CAP_SPIRAM);
-        _configuration.set_save_delay(1LL);
         _configuration.load(&_config);
         _playing_gif = NULL;
+
+        if (_config.magic != GIF_MAGIC)
+        {
+            _playback_speed = 1.0f;
+            _config.name[0] = 0;
+            _config.magic = GIF_MAGIC;
+        }
 
         register_bluetooth_event_handler(COMMAND_GIF_START,
                                          [this](bluetooth_event_t *event)
@@ -131,6 +139,34 @@ class GIFTask : public Task
                                                      _uploading = false;
                                                  });
                                          });
+        register_bluetooth_event_handler(COMMAND_GIF_SPEED,
+                                         [this](bluetooth_event_t *event)
+                                         {
+                                             if (event->op == BLE_GATT_ACCESS_OP_READ_CHR)
+                                             {
+                                             }
+                                             else
+                                             {
+                                                 _playback_speed = bt_valuef(event, 100);
+
+                                                 if (_playback_speed == 0.0f)
+                                                 {
+                                                     _playback_speed = 1.0f;
+                                                 }
+                                                 else if (_playback_speed > 10.0f)
+                                                 {
+                                                     _playback_speed = 10.0f;
+                                                 }
+                                             }
+
+                                             int16_t speed = (int16_t)(_playback_speed * 100.0f);
+
+                                             event->send_size = 2;
+                                             event->send_buffer[0] = (speed >> 8) & 0xFF;
+                                             event->send_buffer[1] = (speed) & 0xFF;
+
+                                             _configuration.save(&_config);
+                                         });
 
         start_gif();
     }
@@ -139,27 +175,22 @@ class GIFTask : public Task
     {
         if (_uploading)
         {
-            _display->clear_screen();
-
-            _display->setCursor(4, 4);
-            _display->printf("%0.2f", (float)_upload_progress / (float)_upload_size);
-
-            *sleep_time = pdMS_TO_TICKS(50);
+            show_progress(sleep_time);
         }
         else if (_playing_gif)
         {
-            int delay = _gif_player.play();
+            float delay = (float)_gif_player.play();
 
-            *sleep_time = pdMS_TO_TICKS(delay);
+            if (_playback_speed > 0.0f && _playback_speed != 1.0f)
+            {
+                delay *= 1 / _playback_speed;
+            }
+
+            *sleep_time = pdMS_TO_TICKS((int)delay);
         }
         else
         {
-            _display->clear_screen();
-
-            _display->setCursor(4, 4);
-            _display->printf("No GIF");
-
-            *sleep_time = pdMS_TO_TICKS(150);
+            show_no_gif(sleep_time);
         }
 
         return false;
@@ -172,6 +203,7 @@ class GIFTask : public Task
     char _uploading_file_name[32];
     uint32_t _upload_size;
     uint32_t _upload_progress;
+    float _playback_speed;
     bool _uploading;
     uint8_t *_save_buffer;
     FILE *_playing_gif;
@@ -182,6 +214,52 @@ class GIFTask : public Task
 
     const char *_temp_file_name = VOLUME_ROOT "/new.gif";
     const char *_playing_file_name = VOLUME_ROOT "/current.gif";
+
+    void show_no_gif(TickType_t *sleep_time)
+    {
+        _display->clear_screen();
+
+        _display->setCursor(4, 4);
+        _display->printf("No GIF");
+
+        *sleep_time = pdMS_TO_TICKS(150);
+    }
+
+    void show_progress(TickType_t *sleep_time)
+    {
+        _display->clear_screen();
+
+        float ratio = (float)_upload_progress / (float)_upload_size;
+
+        char name[21];
+
+        strncpy(name, _uploading_file_name, 20);
+
+        _display->setTextSize(1);
+        _display->drawRect(2, 12, 60, 12, RGB(0, 0, 0x8));
+
+        if (ratio < 1.0f)
+        {
+            _display->setCursor(2, 2);
+            _display->printf("RX: %0.0f%%", ratio * 100.0f);
+
+            int16_t w = (int16_t)(59.0f * ratio) % 59;
+
+            _display->fillRect(3, 13, w, 10, RGB(0, 0x8, 0x8));
+        }
+        else
+        {
+            _display->setCursor(2, 2);
+            _display->printf("Saving...");
+            _display->fillRect(3, 13, 58, 10, RGB(0, 0x8, 0x8));
+        }
+
+        _display->setCursor(2, 26);
+        _display->setTextColor(RGB(0x8, 0x8, 0));
+        _display->printf("%s", name);
+
+        *sleep_time = pdMS_TO_TICKS(25);
+    }
 
     void save_gif()
     {
@@ -210,9 +288,10 @@ class GIFTask : public Task
 
         strcpy(_config.name, _uploading_file_name);
 
+        _config._playback_speed = _playback_speed;
         _config.magic = GIF_MAGIC;
 
-        _configuration.save(&_config);
+        _configuration.save(&_config, 1LL);
         ESP_LOGI(GIF_TAG, "Saved config: %s", _config.name);
     }
 
