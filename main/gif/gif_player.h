@@ -67,7 +67,12 @@ class GIFPlayer
             for (int tx = 0; tx < w; tx++)
             {
                 uint16_t c1 = ((pixels[tx] >> 8) & 0xFF) | ((pixels[tx] & 0xFF) << 8);
-                uint16_t c2 = RGB((c1 >> 12), (c1 >> 7), c1);
+
+                uint16_t r = (((c1 >> 12) & 0xF));
+                uint16_t g = (((c1 >> 7) & 0xF));
+                uint16_t b = (((c1 >> 1) & 0xF));
+
+                uint16_t c2 = RGB(r, g, b);
 
                 int xx = xo + tx;
                 int yy = yo + ty;

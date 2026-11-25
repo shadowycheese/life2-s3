@@ -38,7 +38,7 @@
 #define PANEL_HEIGHT 32
 #define PANEL_COUNT 2
 
-#define CLOCK_DIVIDER (8)
+#define CLOCK_DIVIDER (32)
 
 class Hub75Driver
 {

@@ -40,7 +40,7 @@ class MandlebrotTask : public Task
         {
             for (int x = 0; x < _w; x++)
             {
-                _display->draw_pixel(x, y, (uint16_t)_mandlebrot.iterations(x, y));
+                _display->draw_pixel(x, y, _mandlebrot.colour(x, y));
             }
         }
 

@@ -15,7 +15,14 @@
 // A small set of keyframes describing one closed tour. The frames between
 // them are generated at runtime (see preparePath/step), so the expensive part
 // of each step is still rendering the Mandelbrot, not walking the path.
-#define ZOOM_KEYS 25
+#define ZOOM_KEYS 24
+
+// Iteration counts are turned into a smooth (fractional) value and run
+// through a repeating palette. One cycle every COLOUR_CYCLE iterations means
+// the image gains colour bands as you zoom in, instead of getting darker.
+#define PALETTE_SIZE 256
+#define COLOUR_CYCLE 64.0f
+#define PALETTE_MAX_CHANNEL 0x8 // palette is scaled into 0..PALETTE_MAX_CHANNEL
 
 typedef struct
 {
@@ -49,14 +56,17 @@ class Mandlebrot
 
         _grid = (uint16_t *)(void *)heap_caps_aligned_alloc(4, grid_bytes, MALLOC_CAP_INTERNAL);
 
+        buildPalette();
         preparePath();
     }
 
-    uint16_t iterations(int x, int y)
+    // The grid holds ready-to-display 12-bit RGB colours, not iteration counts.
+    uint16_t colour(int x, int y)
     {
         return _grid[(y * _w) + x];
     }
 
+    // Returns the 12-bit colour for one point (0 means "inside the set").
     __attribute__((always_inline)) inline uint16_t calc(float r, float i, int max_loops)
     {
         // The main cardioid and the period-2 bulb are wholly inside the set;
@@ -104,7 +114,15 @@ class Mandlebrot
             return 0;
         }
 
-        return (uint16_t)loop;
+        // Fractional escape count: loop minus the fractional part of the last
+        // iteration. This removes the hard bands caused by a whole-number count.
+        // With escape at |z| = 2 the correction is log2(log2|z|).
+        const float smooth = (float)loop - log2f(0.5f * log2f(zr2 + zi2));
+
+        // Advance through the repeating palette once per COLOUR_CYCLE iterations.
+        int index = (int)(smooth * ((float)PALETTE_SIZE / COLOUR_CYCLE)) & (PALETTE_SIZE - 1);
+
+        return _palette[index];
     }
 
     void step()
@@ -134,7 +152,8 @@ class Mandlebrot
 
         const double real = h00 * _values[k][0] + h10 * h * _tangents[k][0] + h01 * _values[kn][0] + h11 * h * _tangents[kn][0];
         const double imag = h00 * _values[k][1] + h10 * h * _tangents[k][1] + h01 * _values[kn][1] + h11 * h * _tangents[kn][1];
-        const double logScale = h00 * _values[k][2] + h10 * h * _tangents[k][2] + h01 * _values[kn][2] + h11 * h * _tangents[kn][2];
+        const double logScale =
+            h00 * _values[k][2] + h10 * h * _tangents[k][2] + h01 * _values[kn][2] + h11 * h * _tangents[kn][2];
         const double iterF = h00 * _values[k][3] + h10 * h * _tangents[k][3] + h01 * _values[kn][3] + h11 * h * _tangents[kn][3];
 
         // Zoom geometrically: constant octaves per frame, no scale overshoot.
@@ -185,6 +204,67 @@ class Mandlebrot
     double _tangents[ZOOM_KEYS][4];
     int _durations[ZOOM_KEYS];
 
+    uint16_t _palette[PALETTE_SIZE];
+
+    void buildPalette()
+    {
+        // One continuous loop of colours, dark at both ends so it can repeat
+        // without a visible seam: violet -> blue -> cyan -> white -> gold ->
+        // red -> violet. Only the interior stays truly black.
+        struct stop_t
+        {
+            int pos;
+            int r;
+            int g;
+            int b;
+        };
+
+        static const stop_t stops[] = {
+            {0, 1, 0, 3},
+            {22, 3, 0, 10},
+            {46, 1, 4, 15},
+            {70, 0, 10, 15},
+            {86, 0, 15, 15},
+            {98, 8, 15, 15},
+            {106, 15, 15, 15},
+            {118, 15, 14, 2},
+            {132, 15, 9, 0},
+            {150, 15, 3, 0},
+            {172, 9, 0, 4},
+            {200, 4, 0, 8},
+            {230, 2, 0, 6},
+            {255, 1, 0, 3},
+        };
+
+        const int count = sizeof(stops) / sizeof(stops[0]);
+
+        for (int i = 0; i < PALETTE_SIZE; i++)
+        {
+            int s = 0;
+            while ((s < count - 2) && (i >= stops[s + 1].pos))
+            {
+                s++;
+            }
+
+            const stop_t &a = stops[s];
+            const stop_t &b = stops[s + 1];
+            const int span = b.pos - a.pos;
+            const int num = i - a.pos;
+
+            const int r15 = a.r + ((b.r - a.r) * num) / span;
+            const int g15 = a.g + ((b.g - a.g) * num) / span;
+            const int b15 = a.b + ((b.b - a.b) * num) / span;
+
+            // Scale the whole ramp down rather than clipping the highlights,
+            // so bright stops keep their gradient while capping every channel.
+            const int r = (r15 * PALETTE_MAX_CHANNEL + 7) / 15;
+            const int g = (g15 * PALETTE_MAX_CHANNEL + 7) / 15;
+            const int bl = (b15 * PALETTE_MAX_CHANNEL + 7) / 15;
+
+            _palette[i] = (uint16_t)((r << 8) | (g << 4) | bl);
+        }
+    }
+
     void preparePath()
     {
         _total_frames = 0;
@@ -234,37 +314,35 @@ class Mandlebrot
         }
     }
 
-    // One closed loop: seahorse valley -> spiral -> triple spiral ->
-    // elephant valley -> lower boundary -> mini Mandelbrot -> wide.
-    // Each zoom-in is paired with a zoom-out and travel legs stay at a
-    // moderate scale so the boundary is always visible (never all black).
+    // One closed loop: seahorse valley -> triple spiral -> Feigenbaum point ->
+    // mini Mandelbrot -> wide. Frames are budgeted for the dives, not the
+    // travel: most of the loop is spent zooming, and the pans between
+    // destinations are short hops at a wider scale where motion reads clearly.
+    // A repeated key is a hold (equal endpoints force a flat, frozen segment).
     const zoom_key_t _keys[ZOOM_KEYS] = {
-        {-0.500000f, 0.000000f, 3.00000f,  90, 24}, // wide establishing view
-        {-0.750000f, 0.110000f, 0.50000f, 135, 30}, // seahorse valley approach
-        {-0.745000f, 0.110000f, 0.15000f, 180, 26},
-        {-0.744000f, 0.160000f, 0.03000f, 238, 26},
-        {-0.746975f, 0.135175f, 0.00500f, 275, 28}, // deep spiral
-        {-0.744000f, 0.160000f, 0.03000f, 238, 26},
-        {-0.750000f, 0.110000f, 0.50000f, 135, 30}, // back out
-        {-0.450000f, 0.400000f, 0.50000f, 150, 28}, // travel north along boundary
-        {-0.125000f, 0.744000f, 0.50000f, 160, 28},
-        {-0.088000f, 0.654000f, 0.12000f, 206, 26}, // triple spiral approach
-        {-0.058000f, 0.661500f, 0.02500f, 238, 28}, // triple spiral close
-        {-0.088000f, 0.654000f, 0.12000f, 206, 26},
-        {-0.125000f, 0.744000f, 0.50000f, 160, 28}, // back out
-        { 0.350000f, 0.350000f, 0.50000f, 155, 28}, // travel around cardioid (outside)
-        { 0.250000f, 0.000000f, 0.50000f, 145, 28}, // cusp
-        { 0.320000f, 0.010000f, 0.08000f, 211, 26}, // elephant valley
-        { 0.250000f, 0.000000f, 0.50000f, 145, 28},
-        { 0.350000f,-0.350000f, 0.50000f, 150, 26}, // travel south
-        { 0.150000f,-0.600000f, 0.50000f, 155, 28},
-        {-0.150000f,-0.600000f, 0.50000f, 155, 28},
-        {-0.450000f,-0.550000f, 0.50000f, 150, 28},
-        {-0.750000f,-0.110000f, 0.20000f, 170, 26}, // lower seahorse
-        {-0.900000f,-0.450000f, 0.70000f, 150, 28}, // bypass below period-2 bulb
-        {-1.200000f, 0.000000f, 1.00000f, 110, 30}, // antenna
-        {-1.768800f, 0.001500f, 0.08000f, 220, 42}, // mini Mandelbrot (then back to wide)
+        {-0.500000f, 0.000000f, 3.00000f, 105, 16}, // wide establishing view
+        {-0.700000f, 0.140000f, 1.10000f, 135, 9},  // quick pull towards seahorse
+        {-0.750000f, 0.110000f, 0.40000f, 165, 12}, // seahorse valley approach
+        {-0.745000f, 0.120000f, 0.12000f, 210, 16}, {-0.746900f, 0.135200f, 0.02000f, 300, 20},
+        {-0.746975f, 0.135175f, 0.00400f, 420, 10},                                             // deep spiral, short hold
+        {-0.746975f, 0.135175f, 0.00400f, 420, 14},                                             // (hold, then pull out)
+        {-0.746900f, 0.135200f, 0.02000f, 300, 10}, {-0.750000f, 0.110000f, 0.40000f, 165, 10}, // back out
+        {-0.450000f, 0.400000f, 1.20000f, 130, 10},                                             // north, wide
+        {-0.100000f, 0.700000f, 0.90000f, 140, 9},                                              // towards triple spiral
+        {-0.088000f, 0.654000f, 0.12000f, 220, 14},                                             // triple spiral approach
+        {-0.064000f, 0.660000f, 0.05000f, 280, 8},                                              // close, short hold
+        {-0.064000f, 0.660000f, 0.05000f, 280, 12},                                             // (hold, then pull out)
+        {-0.088000f, 0.654000f, 0.12000f, 220, 10}, {-0.600000f, 0.550000f, 1.30000f, 125, 10}, // west, wide
+        {-1.100000f, 0.250000f, 1.00000f, 120, 9},                                              // towards the real axis
+        {-1.404155f, 0.000000f, 0.06000f, 280, 12},                                             // Feigenbaum point approach
+        {-1.404155f, 0.000000f, 0.01200f, 380, 8},                                              // close, short hold
+        {-1.404155f, 0.000000f, 0.01200f, 380, 12},                                             // (hold, then pull out)
+        {-1.550000f, 0.000000f, 0.08000f, 280, 10}, {-1.768800f, 0.001500f, 0.04000f, 300, 12}, // mini Mandelbrot approach
+        {-1.768800f, 0.001500f, 0.02500f, 320, 8},                                              // close, short hold
+        {-1.768800f, 0.001500f, 0.02500f, 320, 26},                                             // (hold, then reveal wide)
     };
+
+    static_assert((sizeof(_keys) / sizeof(_keys[0])) == ZOOM_KEYS, "ZOOM_KEYS must match the key table");
 };
 
 #endif
